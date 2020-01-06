@@ -86,25 +86,27 @@ joinMeet = Rewrite.withTransform find $ \c -> case c of
   Join c1 c2 v (V r1) (V r2) | r1 == r2 -> do
     pure [Goal c1 (V r1 :< v) ]
 
-  Meet c1 c2 v (R r1 s1) (R r2 s2) | r1 /= r2 -> do
+  Meet c1 c2 v (R rp1 r1 s1) (R rp2 r2 s2) | r1 /= r2 && rp1 == rp2 -> do
     guard (Row.compatible r1 r2)
     guard (sigilsCompatible s1 s2)
     r <- lift (union leastTaken r1 r2)
     s <- Right <$> lift solvFresh
-    pure [Goal c1 (v :< R r s), Goal c1 (R r s :< R r1 s1), Goal c2 (R r s :< R r2 s2) ]
+    rp <- UP <$> lift solvFresh
+    pure [Goal c1 (v :< R rp r s), Goal c1 (R rp r s :< R rp1 r1 s1), Goal c2 (R rp r s :< R rp2 r2 s2) ]
 
-  Meet c1 c2 v (R r1 s1) (R r2 s2) | r1 == r2 && s1 == s2 -> do
-    pure [Goal c1 (v :< R r1 s1)]
+  Meet c1 c2 v (R rp1 r1 s1) (R rp2 r2 s2) | r1 == r2 && s1 == s2 && rp1 == rp2 -> do
+    pure [Goal c1 (v :< R rp1 r1 s1)]
 
-  Join c1 c2 v (R r1 s1) (R r2 s2) | r1 /= r2 -> do
+  Join c1 c2 v (R rp1 r1 s1) (R rp2 r2 s2) | r1 /= r2 && rp1 == rp2 -> do
     guard (Row.compatible r1 r2)
     guard (sigilsCompatible s1 s2)
     r <- lift (union mostTaken r1 r2)
     s <- Right <$> lift solvFresh
-    pure [Goal c1 (R r s :< v), Goal c1 (R r1 s1 :< R r s), Goal c2 (R r2 s2 :< R r s)]
+    rp <- UP <$> lift solvFresh
+    pure [Goal c1 (R rp r s :< v), Goal c1 (R rp1 r1 s1 :< R rp r s), Goal c2 (R rp2 r2 s2 :< R rp r s)]
 
-  Join c1 c2 v (R r1 s1) (R r2 s2) | r1 == r2 && s1 == s2 -> do
-    pure [Goal c1 (R r1 s1 :< v) ]
+  Join c1 c2 v (R rp1 r1 s1) (R rp2 r2 s2) | r1 == r2 && s1 == s2 && rp1 == rp2 -> do
+    pure [Goal c1 (R rp1 r1 s1 :< v) ]
 
 #ifdef BUILTIN_ARRAYS
   Meet c1 c2 v (A t1 l1 s1 _) (A t2 l2 s2 _) -> __todo "Meet: array"
@@ -141,16 +143,16 @@ find (c:cs) = case c ^. goal of
            (Goal ctx  (rho :< _):rs, rs')
              -> pure (Join (c ^. goalContext) ctx (V (Row.Row m (Just v))) tau rho , rs ++ rs')
 
-  (R (Row.Row m (Just v)) s) :< tau@(R (Row.Row m' Nothing) s')
+  (R rp (Row.Row m (Just v)) s) :< tau@(R rp' (Row.Row m' Nothing) s')
     | M.null m -> case partition (flexRowSub v) cs of
            ([], rs) -> fmap (c:) <$> find cs
            (Goal ctx (_ :< rho):rs, rs')
-             -> pure (Meet (c ^. goalContext) ctx (R (Row.Row m (Just v)) s) tau rho , rs ++ rs')
-  tau@(R (Row.Row m' Nothing) s') :< (R (Row.Row m (Just v)) s)
+             -> pure (Meet (c ^. goalContext) ctx (R rp (Row.Row m (Just v)) s) tau rho , rs ++ rs')
+  tau@(R rp' (Row.Row m' Nothing) s') :< (R rp (Row.Row m (Just v)) s)
     | M.null m -> case partition (flexRowSup v) cs of
            ([], rs) -> fmap (c:) <$> find cs
            (Goal ctx (rho :< _):rs, rs')
-             -> pure (Join (c ^. goalContext) ctx (R (Row.Row m (Just v)) s) tau rho , rs ++ rs')
+             -> pure (Join (c ^. goalContext) ctx (R rp (Row.Row m (Just v)) s) tau rho , rs ++ rs')
   _ -> fmap (c:) <$> find cs
   where
     flexRigidSub v (Goal _ (U v' :< rho)) = rigid rho && v == v'
@@ -158,7 +160,7 @@ find (c:cs) = case c ^. goal of
 
     flexRowSub v (Goal _ (V (Row.Row m (Just v')) :< V (Row.Row m' Nothing)))
          = M.null m && v == v'
-    flexRowSub v (Goal _ (R (Row.Row m (Just v')) s :< R (Row.Row m' Nothing) s'))
+    flexRowSub v (Goal _ (R _ (Row.Row m (Just v')) s :< R _ (Row.Row m' Nothing) s'))
          = M.null m && v == v'
     flexRowSub v _ = False
 
@@ -167,7 +169,7 @@ find (c:cs) = case c ^. goal of
 
     flexRowSup v (Goal _ (V (Row.Row m Nothing) :< V (Row.Row m' (Just v'))))
          = M.null m' && v == v'
-    flexRowSup v (Goal _ (R (Row.Row m Nothing) s :< R (Row.Row m' (Just v')) s'))
+    flexRowSup v (Goal _ (R _ (Row.Row m Nothing) s :< R _ (Row.Row m' (Just v')) s'))
          = M.null m' && v == v'
     flexRowSup v _ = False
 

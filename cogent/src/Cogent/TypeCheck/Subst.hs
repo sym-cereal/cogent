@@ -24,15 +24,14 @@ import Data.Maybe
 import Data.Monoid hiding (Alt)
 import Prelude hiding (lookup)
 
-import Debug.Trace
-
-data AssignResult = Type TCType
-                  | Sigil (Sigil (Maybe DataLayoutExpr))
+data AssignResult = Type TCType 
+                  | Sigil (Sigil ())
                   | Row (Row.Row TCType)
 #ifdef BUILTIN_ARRAYS
                   | ARow (ARow.ARow TCExpr)
                   | Expr TCSExpr
 #endif
+                  | RecPar RP
                   deriving Show
 
 newtype Subst = Subst (M.IntMap AssignResult)
@@ -57,6 +56,10 @@ ofExpr :: Int -> TCSExpr -> Subst
 ofExpr i e = Subst (M.fromList [(i, Expr e)])
 #endif
 
+ofRecPar :: Int -> RP -> Subst
+ofRecPar i t = Subst (M.fromList [(i, RecPar t)])
+
+
 null :: Subst -> Bool
 null (Subst x) = M.null x
 
@@ -79,16 +82,17 @@ apply (Subst f) (U x)
   = U x
 apply (Subst f) (V (Row.Row m' (Just x)))
   | Just (Row (Row.Row m q)) <- M.lookup x f = apply (Subst f) (V (Row.Row (DM.union m m') q))
-apply (Subst f) (R (Row.Row m' (Just x)) s)
-  | Just (Row (Row.Row m q)) <- M.lookup x f = apply (Subst f) (R (Row.Row (DM.union m m') q) s)
-apply (Subst f) (R r (Right x))
-  | Just (Sigil s) <- M.lookup x f = apply (Subst f) (R r (Left s))
+apply (Subst f) (R rp (Row.Row m' (Just x)) s) 
+  | Just (Row (Row.Row m q)) <- M.lookup x f = apply (Subst f) (R rp (Row.Row (DM.union m m') q) s)
+apply (Subst f) (R rp r (Right x))
+  | Just (Sigil s) <- M.lookup x f = apply (Subst f) (R rp r (Left s))
 #ifdef BUILTIN_ARRAYS
 apply (Subst f) (A t l (Right x) mhole)
   | Just (Sigil s) <- M.lookup x f = apply (Subst f) (A t l (Left s) mhole)
 #endif
 apply f (V x) = V (fmap (apply f) x)
-apply f (R x s) = R (fmap (apply f) x) s
+apply f (R rp@(UP i) x s) = R (applyRP f rp) x s
+apply f (R rp x s) = R rp (fmap (apply f) x) s
 #ifdef BUILTIN_ARRAYS
 apply f (A x l s tkns) = A (apply f x) (applySE f l) s (fmap (applySE f) tkns)
 apply f (T x) = T (ffmap (applySE f) $ fmap (apply f) x)
@@ -96,6 +100,20 @@ apply f (T x) = T (ffmap (applySE f) $ fmap (apply f) x)
 apply f (T x) = T (fmap (apply f) x)
 #endif
 apply f (Synonym n ts) = Synonym n (fmap (apply f) ts)
+
+applySigil :: Subst -> Either (Sigil ()) Int -> Either (Sigil ()) Int
+applySigil (Subst f) (Right x)
+  | Just (Sigil s) <- M.lookup x f
+  = Left s
+  | otherwise
+  = Right x
+
+applyRP :: Subst -> RP -> RP
+applyRP (Subst f) (UP x) 
+  | Just (RecPar rp) <- M.lookup x f
+  = rp
+  | otherwise
+  = UP x
 
 applyAlts :: Subst -> [Alt TCPatn TCExpr] -> [Alt TCPatn TCExpr]
 applyAlts = map . applyAlt
@@ -139,6 +157,7 @@ applyC s (Unsat e) = Unsat $ applyErr s e
 applyC s (SemiSat w) = SemiSat (applyWarn s w)
 applyC s Sat = Sat
 applyC s (Exhaustive t ps) = Exhaustive (apply s t) ps
+applyC s (UnboxedNotRecursive rp sig) = UnboxedNotRecursive (applyRP s rp) (applySigil s sig)
 applyC s (Solved t) = Solved (apply s t)
 applyC s (IsPrimType t) = IsPrimType (apply s t)
 

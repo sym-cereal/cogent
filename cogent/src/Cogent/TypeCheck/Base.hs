@@ -100,6 +100,7 @@ data TypeError = FunctionNotFound VarName
                | PutToNonRecordOrVariant    (Maybe [FieldName]) TCType
                | TakeNonExistingField FieldName TCType
                | PutNonExistingField  FieldName TCType
+               | RecursiveUnboxedRecord RecursiveParameter (Sigil RepExpr) -- A record that is unboxed yet has a recursive parameter
                | DiscardWithoutMatch TagName
                | RequiredTakenTag TagName
 #ifdef BUILTIN_ARRAYS
@@ -191,6 +192,7 @@ data Constraint' t = (:<) t t
                    | SemiSat TypeWarning
                    | Sat
                    | Exhaustive t [RawPatn]
+                   | UnboxedNotRecursive RP (Either (Sigil ()) Int)
                    | Solved t
                    | IsPrimType t
 #ifdef BUILTIN_ARRAYS
@@ -262,9 +264,21 @@ warnToConstraint f w | f = SemiSat w
 -- Types for constraint generation and solving
 -- -----------------------------------------------------------------------------
 
+data RP = Mu VarName | None | UP Int
+          deriving (Show, Eq, Ord)
+
+coerceRP :: RecursiveParameter -> RP
+coerceRP (Rec v) = Mu v
+coerceRP NonRec  = None 
+
+unCoerceRp :: RP -> RecursiveParameter
+unCoerceRp (Mu v) = Rec v
+unCoerceRp None   = NonRec
+unCoerceRp (UP i)      = __impossible $ "Tried to coerce unification parameter (?" ++ show i ++ ") in core recursive type to surface recursive type"
+
 data TCType         = T (Type TCSExpr TCType)
                     | U Int  -- unifier
-                    | R (Row TCType) (Either (Sigil (Maybe DataLayoutExpr)) Int)
+                    | R RP (Row TCType) (Either (Sigil (Maybe DataLayoutExpr)) Int)
                     | V (Row TCType)
 #ifdef BUILTIN_ARRAYS
                     | A TCType TCSExpr (Either (Sigil (Maybe DataLayoutExpr)) Int) (Maybe TCSExpr)
@@ -290,6 +304,17 @@ instance Foldable SExpr where
 instance Traversable SExpr where
   traverse f (SE t e) = SE <$> f t <*> quadritraverse f (traverse f) (traverse f) (traverse f) e
   traverse f (SU t x) = SU <$> f t <*> pure x
+
+-- TODO: Is this still in use?
+rigid :: TCType -> Bool 
+rigid (T (TBang {})) = False
+rigid (T (TTake {})) = False
+rigid (T (TPut {})) = False
+rigid (U {}) = False
+rigid (Synonym {}) = False
+rigid (R _ r _) = not $ Row.justVar r
+rigid (V r) = not $ Row.justVar r
+rigid _ = True
 
 data FuncOrVar = MustFunc | MustVar | FuncOrVar deriving (Eq, Ord, Show)
 
@@ -561,7 +586,7 @@ exitOnErr ma = do a <- ma
 substType :: [(VarName, TCType)] -> TCType -> TCType
 substType vs (U x) = U x
 substType vs (V x) = V (fmap (substType vs) x)
-substType vs (R x s) = R (fmap (substType vs) x) s
+substType vs (R rp x s) = R rp (fmap (substType vs) x) s
 #ifdef BUILTIN_ARRAYS
 substType vs (A t l s tkns) = A (substType vs t) l s tkns
 #endif
@@ -572,6 +597,45 @@ substType vs (T (TVar v b u)) | Just x <- lookup v vs
       (True , False) -> T (TBang x)
       (_    , True ) -> T (TUnbox x)
 substType vs (T t) = T (fmap (substType vs) t)
+
+-- TODO: Are these still used?
+validateType :: [VarName] -> RawType -> TcM TCType
+validateType vs t = either (\e -> logErr e >> exitErr) return =<< lift (lift $ runExceptT $ validateType' vs t)
+
+-- TODO: Are these still used?
+validateType' :: [VarName] -> RawType -> TcErrM TypeError TCType
+validateType' vs (RT t) = do
+  ts <- use knownTypes
+  case t of
+    TVar v _ _  | v `notElem` vs         -> throwE (UnknownTypeVariable v)
+    TCon t as _ | Nothing <- lookup t ts -> throwE (UnknownTypeConstructor t)
+                | Just (vs', _) <- lookup t ts
+                , provided <- length as
+                , required <- length vs'
+                , provided /= required
+               -> throwE (TypeArgumentMismatch t provided required)
+                |  Just (_, Just x) <- lookup t ts
+               -> Synonym t <$> mapM (validateType' vs) as  
+    TRecord rp fs s | fields  <- map fst fs
+                 , fields' <- nub fields
+                -> let toRow (T (TRecord rp fs s)) = R (coerceRP rp) (Row.fromList fs) (Left (fmap (const ()) s)) 
+                   in 
+                   if rp /= NonRec && s == Unboxed 
+                   then throwE (RecursiveUnboxedRecord rp s)
+                   else if fields' == fields
+                    then (toRow . T . ffmap toSExpr) <$> mapM (validateType' vs) t
+                    else throwE (DuplicateRecordFields (fields \\ fields'))
+    TVariant fs  -> do let tuplize [] = T TUnit
+                           tuplize [x] = x 
+                           tuplize xs  = T (TTuple xs)
+                       TVariant fs' <- ffmap toSExpr <$> mapM (validateType' vs) t 
+                       pure (V (Row.fromMap (fmap (first tuplize) fs')))
+    -- TArray te l -> check l >= 0  -- TODO!!!
+    _ -> T <$> (mmapM (return . toSExpr) <=< mapM (validateType' vs)) t
+
+validateTypes' :: (Traversable t) => [VarName] -> t RawType -> TcErrM TypeError (t TCType)
+validateTypes' vs = mapM (validateType' vs)
+
 
 -- only for error reporting
 flexOf (U x) = Just x
@@ -613,13 +677,17 @@ unifVars (Synonym n ts) = concatMap unifVars ts
 unifVars (V r)
   | Just x <- Row.var r = [x] ++ concatMap unifVars (Row.allTypes r)
   | otherwise = concatMap unifVars (Row.allTypes r)
-unifVars (R r s)
+unifVars (R rp r s)
   | Just x <- Row.var r = [x] ++ concatMap unifVars (Row.allTypes r)
                        ++ case s of Left s -> []
                                     Right y -> [y]
+                       ++ case rp of up i -> [i]
+                                     _   -> []
   | otherwise = concatMap unifVars (Row.allTypes r)
                        ++ case s of Left s -> []
                                     Right y -> [y]
+                       ++ case rp of up i -> [i]
+                                     _   -> []
 #ifdef BUILTIN_ARRAYS
 unifVars (A t l s tkns) = unifVars t ++ (case s of Left s -> []; Right y -> [y])
 #endif

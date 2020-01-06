@@ -66,7 +66,7 @@ language = haskellStyle
 #endif
                                  ,"->","=>","~>","<=","|","|>"]
            , T.reservedNames   = ["let","in","type","include","all","take","put","inline","upcast"
-                                 ,"variant","record","at","layout","pointer"
+                                 ,"variant","record","at","rec","layout","pointer"
                                  ,"if","then","else","not","complement","and","True","False","o"
 #ifdef BUILTIN_ARRAYS
                                  ,"array","map2","@take","@put"]
@@ -469,13 +469,18 @@ monotype = do avoidInitial
               return $ TCon tn [] s)
       -- <|> TCon <$> typeConName <*> pure [] <*> pure Writable
       <|> tuple <$> parens (commaSep monotype)
-      <|> (\fs -> TRecord fs (Boxed False Nothing))
-          <$> braces (commaSep1 ((\a b c -> (a,(b,c))) <$> variableName <* reservedOp ":" <*> monotype <*> pure False))
+      <|> (\rp -> (\fs -> TRecord rp fs (Boxed False Nothing)))
+          <$> recPar
+          <*> braces (commaSep1 ((\a b c -> (a,(b,c))) <$> variableName <* reservedOp ":" <*> monotype <*> pure False))
       <|> TVariant . M.fromList <$> angles (((,) <$> typeConName <*> fmap ((,False)) (many typeA2)) `sepBy` reservedOp "|"))
 
     tuple [] = TUnit
     tuple [e] = typeOfLT e
     tuple es  = TTuple es
+
+    recPar = Rec <$> (reserved "mu" *> variableName)
+         <|> return NonRec
+
 
     fList = (Just . (:[])) <$> identifier
         <|> parens ((reservedOp ".." >> return Nothing) <|> (commaSep identifier >>= return . Just))

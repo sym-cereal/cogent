@@ -31,7 +31,7 @@ data AssignResult = Type TCType
                   | ARow (ARow.ARow TCExpr)
                   | Expr TCSExpr
 #endif
-                  | RecPar RP
+                  | RecP RP
                   deriving Show
 
 newtype Subst = Subst (M.IntMap AssignResult)
@@ -57,7 +57,7 @@ ofExpr i e = Subst (M.fromList [(i, Expr e)])
 #endif
 
 ofRecPar :: Int -> RP -> Subst
-ofRecPar i t = Subst (M.fromList [(i, RecPar t)])
+ofRecPar i t = Subst (M.fromList [(i, RecP t)])
 
 
 null :: Subst -> Bool
@@ -91,7 +91,9 @@ apply (Subst f) (A t l (Right x) mhole)
   | Just (Sigil s) <- M.lookup x f = apply (Subst f) (A t l (Left s) mhole)
 #endif
 apply f (V x) = V (fmap (apply f) x)
-apply f (R rp@(UP i) x s) = R (applyRP f rp) x s
+apply (Subst f) (R (UP x) r s)
+  | Just (RecP rp) <- M.lookup x f
+    = apply (Subst f) (R rp r s)
 apply f (R rp x s) = R rp (fmap (apply f) x) s
 #ifdef BUILTIN_ARRAYS
 apply f (A x l s tkns) = A (apply f x) (applySE f l) s (fmap (applySE f) tkns)
@@ -100,20 +102,6 @@ apply f (T x) = T (ffmap (applySE f) $ fmap (apply f) x)
 apply f (T x) = T (fmap (apply f) x)
 #endif
 apply f (Synonym n ts) = Synonym n (fmap (apply f) ts)
-
-applySigil :: Subst -> Either (Sigil ()) Int -> Either (Sigil ()) Int
-applySigil (Subst f) (Right x)
-  | Just (Sigil s) <- M.lookup x f
-  = Left s
-  | otherwise
-  = Right x
-
-applyRP :: Subst -> RP -> RP
-applyRP (Subst f) (UP x) 
-  | Just (RecPar rp) <- M.lookup x f
-  = rp
-  | otherwise
-  = UP x
 
 applyAlts :: Subst -> [Alt TCPatn TCExpr] -> [Alt TCPatn TCExpr]
 applyAlts = map . applyAlt
@@ -157,7 +145,7 @@ applyC s (Unsat e) = Unsat $ applyErr s e
 applyC s (SemiSat w) = SemiSat (applyWarn s w)
 applyC s Sat = Sat
 applyC s (Exhaustive t ps) = Exhaustive (apply s t) ps
-applyC s (UnboxedNotRecursive rp sig) = UnboxedNotRecursive (applyRP s rp) (applySigil s sig)
+applyC s (UnboxedNotRecursive r) = UnboxedNotRecursive (apply s r)
 applyC s (Solved t) = Solved (apply s t)
 applyC s (IsPrimType t) = IsPrimType (apply s t)
 

@@ -617,7 +617,7 @@ cg' (Put e ls) t | not (any isNothing ls) = do
 >>>>>>> 44d53a4b... compiler: further integrate recursive parameters into the core/surface language, begin work on typechecking
       c1 = row' :< t
       c2 = alpha :< row
-      c3 = UnboxedNotRecursive rp (Right sigil)
+      c3 = UnboxedNotRecursive row
       r = Put e' (map Just (zip fs es'))
   traceTc "gen" (text "cg for put:" <+> prettyE r
            L.<$> text "of type" <+> pretty t <> semi

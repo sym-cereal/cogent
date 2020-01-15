@@ -53,7 +53,7 @@ import Text.PrettyPrint.ANSI.Leijen hiding ((<>), (<$>))
 import Lens.Micro
 import Lens.Micro.Mtl
 
--- import Debug.Trace
+import Debug.Trace
 
 tc :: [(SourcePos, TopLevel LocType LocPatn LocExpr)]
    -> [(LocType, String)]

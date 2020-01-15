@@ -478,7 +478,7 @@ monotype = do avoidInitial
     tuple [e] = typeOfLT e
     tuple es  = TTuple es
 
-    recPar = Rec <$> (reserved "mu" *> variableName)
+    recPar = Rec <$> (reserved "rec" *> variableName)
          <|> return NonRec
 
 

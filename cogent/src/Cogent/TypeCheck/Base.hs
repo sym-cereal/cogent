@@ -68,6 +68,10 @@ import Lens.Micro
 import Lens.Micro.TH
 import Lens.Micro.Mtl
 
+<<<<<<< HEAD
+=======
+-- TODO: Remove
+>>>>>>> ac88d7d3... compiler: Ported recursive tpyes to core language
 import Debug.Trace
 
 -- -----------------------------------------------------------------------------
@@ -264,7 +268,7 @@ warnToConstraint f w | f = SemiSat w
 -- Types for constraint generation and solving
 -- -----------------------------------------------------------------------------
 
-data RP = Mu VarName | None | UP Int
+data RP = Mu RecParName | None | UP Int
           deriving (Show, Eq, Ord)
 
 coerceRP :: RecursiveParameter -> RP
@@ -274,7 +278,7 @@ coerceRP NonRec  = None
 unCoerceRp :: RP -> RecursiveParameter
 unCoerceRp (Mu v) = Rec v
 unCoerceRp None   = NonRec
-unCoerceRp (UP i)      = __impossible $ "Tried to coerce unification parameter (?" ++ show i ++ ") in core recursive type to surface recursive type"
+unCoerceRp (UP i) = __impossible $ "Tried to coerce unification parameter (?" ++ show i ++ ") in core recursive type to surface recursive type"
 
 data TCType         = T (Type TCSExpr TCType)
                     | U Int  -- unifier
@@ -580,6 +584,7 @@ substType vs (R rp x s) = R rp (fmap (substType vs) x) s
 substType vs (A t l s tkns) = A (substType vs t) l s tkns
 #endif
 substType vs (Synonym n ts) = Synonym n (fmap (substType vs) ts)
+substType vs (RPar v m) = RPar v (fmap (substType vs) m)
 substType vs (T (TVar v b u)) | Just x <- lookup v vs
   = case (b,u) of
       (False, False) -> x
@@ -614,11 +619,14 @@ validateType' vs (RT t) = do
                    else if fields' == fields
                     then (toRow . T . ffmap toSExpr) <$> mapM (validateType' vs) t
                     else throwE (DuplicateRecordFields (fields \\ fields'))
-    TVariant fs  -> do let tuplize [] = T TUnit
-                           tuplize [x] = x 
-                           tuplize xs  = T (TTuple xs)
-                       TVariant fs' <- ffmap toSExpr <$> mapM (validateType' vs) t 
-                       pure (V (Row.fromMap (fmap (first tuplize) fs')))
+    TVariant fs -> do let tuplize [] = T TUnit
+                          tuplize [x] = x 
+                          tuplize xs  = T (TTuple xs)
+                      TVariant fs' <- ffmap toSExpr <$> mapM (validateType' vs) t 
+                      pure (V (Row.fromMap (fmap (first tuplize) fs')))
+    -- Add rec par name here to type variable list to prevent untransformed recPars being
+    -- mistaken as type variables
+    TRPar v m   -> RPar v <$> mapM (validateType' (M.keys m ++ vs)) m
     -- TArray te l -> check l >= 0  -- TODO!!!
     _ -> T <$> (mmapM (return . toSExpr) <=< mapM (validateType' vs)) t
 
@@ -677,6 +685,7 @@ unifVars (R rp r s)
                                     Right y -> [y]
                        ++ case rp of up i -> [i]
                                      _   -> []
+<<<<<<< HEAD
 #ifdef BUILTIN_ARRAYS
 unifVars (A t l s tkns) = unifVars t ++ (case s of Left s -> []; Right y -> [y])
 #endif
@@ -777,3 +786,7 @@ isTypeLayoutExprCompatible env t (DLRepRef n)   =
     Nothing     -> False  -- TODO(dargent): this really shoud be an exceptional state
 isTypeLayoutExprCompatible _ t l = trace ("t = " ++ show t ++ "\nl = " ++ show l) False
 
+=======
+unifVars (RPar v m) = concat $ fmap unifVars m
+unifVars (T x) = foldMap unifVars x
+>>>>>>> ac88d7d3... compiler: Ported recursive tpyes to core language

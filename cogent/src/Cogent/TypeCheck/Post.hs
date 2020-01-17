@@ -247,6 +247,8 @@ normaliseT d (A t n (Left s) mhole) = do
   return $ T $ TArray t' n s' tkns
 normaliseT d (A t n (Right s) mhole) = __impossible ("normaliseT: invalid sigil (?" ++ show s ++ ")")
 #endif
+normaliseT d (U x) = __impossible ("normaliseT: invalid type (?" ++ show x ++ ")")
+normaliseT d (RPar v m) = RPar v <$> mapM (normaliseT d) m
 normaliseT d (T x) = T <$> traverse (normaliseT d) x
 
 

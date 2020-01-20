@@ -216,20 +216,6 @@ simplify axs = Rewrite.pickOne' $ onGoal $ \c -> case c of
     -- Just [t1 :=: t2, Arith (SE $ PrimOp "==" [l1,l2])]
 
   a :-> b -> hoistMaybe $ Just [b]  -- FIXME: cuerently we ignore the impls. / zilinc
-  -- Recursive types
-
-  RPar v1 m1 :<  RPar v2 m2 -> guard (m1 M.! v1 == m2 M.! v2) >> hoistMaybe $ Just []
-  RPar v1 m1 :=: RPar v2 m2 -> guard (m1 M.! v1 == m2 M.! v2) >> hoistMaybe $ Just []
-
-  RPar v m :< x  -> hoistMaybe $ Just [unroll v m :< x]
-  x :< RPar v m  -> hoistMaybe $ Just [x :< unroll v m]
-  x :=: RPar v m -> hoistMaybe $ Just [x :=: unroll v m]
-  RPar v m :=: x -> hoistMaybe $ Just [unroll v m :=: x]
-
-  -- TODO: Remaining cases
-
-  UnboxedNotRecursive (R None _ (Left Unboxed))     -> hoistMaybe $ Just []
-  UnboxedNotRecursive (R _ _    (Left (Boxed _ _))) -> hoistMaybe $ Just []
 
   -- TODO: Here we will call a SMT procedure to simplify all the Arith constraints.
   -- The only things left will be non-trivial predicates. / zilinc
@@ -245,6 +231,22 @@ simplify axs = Rewrite.pickOne' $ onGoal $ \c -> case c of
 
   (T (TCon n ts s)) :=: (T (TCon n' us s'))
     | s == s', n == n' -> hoistMaybe $ Just (zipWith (:=:) ts us)
+
+  -- Recursive types
+
+  RPar v1 (Just m1) :<  RPar v2 (Just m2) -> guard (m1 M.! v1 == m2 M.! v2) >> hoistMaybe $ Just []
+  RPar v1 (Just m1) :=: RPar v2 (Just m2) -> guard (m1 M.! v1 == m2 M.! v2) >> hoistMaybe $ Just []
+
+  RPar v m :< x  -> hoistMaybe $ Just [unroll v m :< x]
+  x :< RPar v m  -> hoistMaybe $ Just [x :< unroll v m]
+  x :=: RPar v m -> hoistMaybe $ Just [x :=: unroll v m]
+  RPar v m :=: x -> hoistMaybe $ Just [unroll v m :=: x]
+
+  -- TODO: Remaining cases
+
+  UnboxedNotRecursive (R None _ (Left Unboxed))     -> hoistMaybe $ Just []
+  UnboxedNotRecursive (R _ _    (Left (Boxed _ _))) -> hoistMaybe $ Just []
+
 
   t -> hoistMaybe $ Nothing
 

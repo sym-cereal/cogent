@@ -68,10 +68,6 @@ import Lens.Micro
 import Lens.Micro.TH
 import Lens.Micro.Mtl
 
-<<<<<<< HEAD
-=======
--- TODO: Remove
->>>>>>> ac88d7d3... compiler: Ported recursive tpyes to core language
 import Debug.Trace
 
 -- -----------------------------------------------------------------------------
@@ -281,12 +277,12 @@ unCoerceRp None   = NonRec
 unCoerceRp (UP i) = __impossible $ "Tried to coerce unification parameter (?" ++ show i ++ ") in core recursive type to surface recursive type"
 
 unroll :: VarName -> RecContext TCType -> TCType
-unroll v ctxt = embedRecPar' ctxt (ctxt M.! v)
+unroll v (Just ctxt) = embedRecPar' (Just ctxt) (ctxt M.! v)
   where
-    embedRecPar' ctxt (T (TVar v _ _)) | v `elem` M.keys ctxt = RPar v ctxt
+    embedRecPar' ctxt (RPar v Nothing) = RPar v ctxt
     embedRecPar' ctxt (T t) = T $ fmap (embedRecPar' ctxt) t
-    embedRecPar' ctxt t@(R rp r s) = let ctxt' = (case rp of (Mu v) -> M.insert v t ctxt; _ -> ctxt)
-                                    in R rp (fmap (embedRecPar' ctxt') r) s
+    embedRecPar' (Just ctxt) t@(R rp r s) = let ctxt' = (case rp of (Mu v) -> M.insert v t ctxt; _ -> ctxt)
+                                    in R rp (fmap (embedRecPar' $ Just ctxt') r) s
     embedRecPar' ctxt (V r) = V $ fmap (embedRecPar' ctxt) r
     embedRecPar' ctxt (Synonym t ts) = Synonym t $ map (embedRecPar' ctxt) ts
     embedRecPar' ctxt t = t
@@ -595,7 +591,7 @@ substType vs (R rp x s) = R rp (fmap (substType vs) x) s
 substType vs (A t l s tkns) = A (substType vs t) l s tkns
 #endif
 substType vs (Synonym n ts) = Synonym n (fmap (substType vs) ts)
-substType vs (RPar v m) = RPar v (fmap (substType vs) m)
+substType vs (RPar v m) = RPar v (fmap (fmap (substType vs)) m)
 substType vs (T (TVar v b u)) | Just x <- lookup v vs
   = case (b,u) of
       (False, False) -> x
@@ -635,9 +631,8 @@ validateType' vs (RT t) = do
                           tuplize xs  = T (TTuple xs)
                       TVariant fs' <- ffmap toSExpr <$> mapM (validateType' vs) t 
                       pure (V (Row.fromMap (fmap (first tuplize) fs')))
-    -- Add rec par name here to type variable list to prevent untransformed recPars being
-    -- mistaken as type variables
-    TRPar v m   -> RPar v <$> mapM (validateType' (M.keys m ++ vs)) m
+    TRPar v (Just m) -> RPar v <$> Just <$> (mapM (validateType' vs) m)
+    TRPar v _        -> pure $ RPar v Nothing
     -- TArray te l -> check l >= 0  -- TODO!!!
     _ -> T <$> (mmapM (return . toSExpr) <=< mapM (validateType' vs)) t
 
@@ -696,6 +691,7 @@ unifVars (R rp r s)
                                     Right y -> [y]
                        ++ case rp of up i -> [i]
                                      _   -> []
+<<<<<<< HEAD
 <<<<<<< HEAD
 #ifdef BUILTIN_ARRAYS
 unifVars (A t l s tkns) = unifVars t ++ (case s of Left s -> []; Right y -> [y])
@@ -801,3 +797,8 @@ isTypeLayoutExprCompatible _ t l = trace ("t = " ++ show t ++ "\nl = " ++ show l
 unifVars (RPar v m) = concat $ fmap unifVars m
 unifVars (T x) = foldMap unifVars x
 >>>>>>> ac88d7d3... compiler: Ported recursive tpyes to core language
+=======
+unifVars (RPar v (Just m)) = concat $ M.map unifVars m
+unifVars (RPar _ _) = []
+unifVars (T x) = foldMap unifVars x
+>>>>>>> 5425e8f5... compiler: recursive types inference in core language

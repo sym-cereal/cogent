@@ -56,6 +56,9 @@ normaliseRW = rewrite' $ \t -> case t of
 #ifdef BUILTIN_ARRAYS
     T (TUnbox (A t l _ tkns)) -> pure (A t l (Left Unboxed) tkns)  -- FIXME
 #endif
+
+    T (TBang (T (TRPar v _ m))) -> pure (T (TRPar v True m))
+
     Synonym n as -> do
         table <- view knownTypes
         case lookup n table of

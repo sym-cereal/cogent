@@ -92,9 +92,9 @@ normaliseRW = rewrite' $ \t -> case t of
        in pure $ A t l s Nothing
 #endif
 
-    T (TLayout l (R row (Left (Boxed p _)))) ->
-      pure $ R row $ Left $ Boxed p (Just l)
-    T (TLayout l (R row (Right i))) ->
+    T (TLayout l (R rp row (Left (Boxed p _)))) ->
+      pure $ R rp row $ Left $ Boxed p (Just l)
+    T (TLayout l (R _ row (Right i))) ->
       __impossible "normaliseRW: TLayout over a sigil variable (R)"
 #ifdef BUILTIN_ARRAYS
     T (TLayout l (A t n (Left (Boxed p _)) tkns)) ->

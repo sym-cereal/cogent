@@ -108,10 +108,10 @@ validateType (RT t) = do
                             -> freshTVar >>= \t' -> return (Unsat $ DataLayoutError anError, t') 
                           _ -> -- layout is good, or no layout
                                -- We have to pattern match on 'TRecord' otherwise it's a type error.
-                               do (c, TRecord fs' s') <- fmapFoldM validateType t
-                                  return (c, toRow. T $ TRecord fs' s')
+                               do (c, TRecord rp' fs' s') <- fmapFoldM validateType t
+                                  return (c, toRow . T $ TRecord rp' fs' s')
                         else freshTVar >>= \t' -> return (Unsat $ DuplicateRecordFields (fields \\ fields'), t')
-                  | otherwise -> (second T) <$> fmapFoldM validateType (TRecord fs s)
+                  | otherwise -> (second T) <$> fmapFoldM validateType (TRecord rp fs s)
 
     TVariant fs  -> do let tuplize [] = T TUnit
                            tuplize [x] = x
@@ -606,15 +606,9 @@ cg' (Put e ls) t | not (any isNothing ls) = do
   (ts, cs, es') <- cgMany es
   U rest <- freshTVar
   U sigil <- freshTVar
-<<<<<<< HEAD
-  rp <- freshRPVar
-  let row  = R (Row.incomplete (zip fs (map (,True ) ts)) rest) (Right sigil)
-      row' = R (Row.incomplete (zip fs (map (,False) ts)) rest) (Right sigil)
-=======
   rp <- freshRPVar
   let row  = R rp (Row.incomplete (zip fs (map (,True ) ts)) rest) (Right sigil)
       row' = R rp (Row.incomplete (zip fs (map (,False) ts)) rest) (Right sigil) 
->>>>>>> 44d53a4b... compiler: further integrate recursive parameters into the core/surface language, begin work on typechecking
       c1 = row' :< t
       c2 = alpha :< row
       c3 = UnboxedNotRecursive row

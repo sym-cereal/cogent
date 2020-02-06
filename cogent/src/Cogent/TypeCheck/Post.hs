@@ -189,8 +189,8 @@ normaliseT d (T (TLayout l t)) = do
   t' <- normaliseT d t
   env <- lift . lift $ use knownDataLayouts
   case t' of
-    (T (TRecord fs (Boxed p Nothing))) -> do
-      let normPartT = normaliseT d . T . TRecord fs
+    (T (TRecord rp fs (Boxed p Nothing))) -> do
+      let normPartT = normaliseT d . T . TRecord rp fs
       t'' <- normPartT Unboxed
       if isTypeLayoutExprCompatible env t'' l
         then normPartT . Boxed p $ Just l
@@ -220,10 +220,10 @@ normaliseT d (T (TCon n ts b)) =
       ts' <- mapM (normaliseT d) ts
       return $ T (TCon n ts' b)
 
-normaliseT d (T (TRecord l s)) = do
+normaliseT d (T (TRecord rp l s)) = do
   s' <- normaliseS s
   l' <- mapM ((secondM . firstM) (normaliseT d)) l
-  return (T (TRecord l' s'))
+  return (T (TRecord rp l' s'))
 
 #ifdef BUILTIN_ARRAYS
 normaliseT d (T (TArray t n s tkns)) = do
@@ -238,7 +238,7 @@ normaliseT d (Synonym n ts) =
     _ -> __impossible ("normaliseT: unresolved synonym " ++ show n)
 
 normaliseT d (V x) = T . TVariant . M.fromList . Row.toEntryList . fmap (:[]) <$> traverse (normaliseT d) x
-normaliseT d (R rp x (Left s)) = T . flip (TRecord (unCoerceRp rp)) (fmap (const noRepE) s) . Row.toEntryList <$> traverse (normaliseT d) x
+normaliseT d (R rp x (Left s)) = T . flip (TRecord $ unCoerceRP rp) s . Row.toEntryList <$> traverse (normaliseT d) x
 normaliseT d (R _ x (Right s)) =  __impossible ("normaliseT: invalid sigil (?" ++ show s ++ ")")
 #ifdef BUILTIN_ARRAYS
 normaliseT d (A t n (Left s) mhole) = do

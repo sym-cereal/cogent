@@ -157,8 +157,8 @@ constructDataLayout' (TSum alternatives)
               layout = alignOffsettable wordSizeBits minBitOffset $ constructDataLayout' coreType
           in  ((endAllocatedBits' layout, tagValue + 1), (name, (tagValue, layout)))
 
-constructDataLayout' (TRecord _ (Boxed {})) = PrimLayout pointerBitRange
-constructDataLayout' (TRecord fields Unboxed) = RecordLayout . fromList . snd $ mapAccumL go 0 fields
+constructDataLayout' (TRecord _ _ (Boxed {})) = PrimLayout pointerBitRange
+constructDataLayout' (TRecord _ fields Unboxed) = RecordLayout . fromList . snd $ mapAccumL go 0 fields
   where
     go :: Show a => Size -> (FieldName, (Type t a, Bool)) -> (Size, (FieldName, DataLayout' BitRange))
     go minBitOffset (name, (coreType, _)) =
@@ -167,7 +167,7 @@ constructDataLayout' (TRecord fields Unboxed) = RecordLayout . fromList . snd $ 
 
     -- Equations for boxed embedded types
     go' :: Show a => Type t a -> DataLayout' BitRange
-    go' (TRecord _      (Boxed _ _)) = PrimLayout pointerBitRange
+    go' (TRecord _ _    (Boxed _ _)) = PrimLayout pointerBitRange
     go' (TCon    _ _    (Boxed _ _)) = PrimLayout pointerBitRange
 
     -- Equations for as yet unsupported embedded types

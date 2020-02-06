@@ -100,7 +100,7 @@ data TypeError = FunctionNotFound VarName
                | PutToNonRecordOrVariant    (Maybe [FieldName]) TCType
                | TakeNonExistingField FieldName TCType
                | PutNonExistingField  FieldName TCType
-               | RecursiveUnboxedRecord RecursiveParameter (Sigil RepExpr) -- A record that is unboxed yet has a recursive parameter
+               | RecursiveUnboxedRecord RecursiveParameter (Sigil (Maybe DataLayoutExpr)) -- A record that is unboxed yet has a recursive parameter
                | DiscardWithoutMatch TagName
                | RequiredTakenTag TagName
 #ifdef BUILTIN_ARRAYS
@@ -271,10 +271,10 @@ coerceRP :: RecursiveParameter -> RP
 coerceRP (Rec v) = Mu v
 coerceRP NonRec  = None 
 
-unCoerceRp :: RP -> RecursiveParameter
-unCoerceRp (Mu v) = Rec v
-unCoerceRp None   = NonRec
-unCoerceRp (UP i) = __impossible $ "Tried to coerce unification parameter (?" ++ show i ++ ") in core recursive type to surface recursive type"
+unCoerceRP :: RP -> RecursiveParameter
+unCoerceRP (Mu v) = Rec v
+unCoerceRP None   = NonRec
+unCoerceRP (UP i) = __impossible $ "Tried to coerce unification parameter (?" ++ show i ++ ") in core recursive type to surface recursive type"
 
 sameRecursive :: RP -> RP -> Bool
 sameRecursive (Mu _) (Mu _) = True
@@ -448,18 +448,18 @@ rawToDepType (RT t) = DT $ go t
   where go :: Type RawExpr RawType -> Type RawTypedExpr DepType
         go t = let f = rawToDepType
                 in case t of
-                     TCon tn ts s  -> TCon tn (fmap f ts) s
-                     TVar v b u    -> TVar v b u
-                     TRecord fs s  -> TRecord (fmap (second $ first f) fs) s
-                     TVariant alts -> TVariant (fmap (first $ fmap f) alts)
-                     TTuple ts     -> TTuple $ fmap f ts
-                     TUnit         -> TUnit
-                     TUnbox t      -> TUnbox $ f t
-                     TBang t       -> TBang $ f t
-                     TTake mfs t   -> TTake mfs $ f t
-                     TPut mfs t    -> TPut mfs $ f t
-                     TLayout l t   -> TLayout l $ f t
-                     _             -> __impossible $ "rawToDepType: we don't allow higher-order refinement types"
+                     TCon tn ts s    -> TCon tn (fmap f ts) s
+                     TVar v b u      -> TVar v b u
+                     TRecord rp fs s -> TRecord rp (fmap (second $ first f) fs) s
+                     TVariant alts   -> TVariant (fmap (first $ fmap f) alts)
+                     TTuple ts       -> TTuple $ fmap f ts
+                     TUnit           -> TUnit
+                     TUnbox t        -> TUnbox $ f t
+                     TBang t         -> TBang $ f t
+                     TTake mfs t     -> TTake mfs $ f t
+                     TPut mfs t      -> TPut mfs $ f t
+                     TLayout l t     -> TLayout l $ f t
+                     _               -> __impossible $ "rawToDepType: we don't allow higher-order refinement types"
 
 toRawTypedExpr :: TypedExpr -> RawTypedExpr
 toRawTypedExpr (TE t e l) = TE (toRawType' t) (ffffmap toRawType' $ fffmap (fmap toRawType') $ ffmap (fmap toRawType') $ fmap (fmap toRawType') e) l
@@ -608,45 +608,6 @@ substType vs (T (TVar v b u)) | Just x <- lookup v vs
       (_    , True ) -> T (TUnbox x)
 substType vs (T t) = T (fmap (substType vs) t)
 
--- TODO: Are these still used?
-validateType :: [VarName] -> RawType -> TcM TCType
-validateType vs t = either (\e -> logErr e >> exitErr) return =<< lift (lift $ runExceptT $ validateType' vs t)
-
--- TODO: Are these still used?
-validateType' :: [VarName] -> RawType -> TcErrM TypeError TCType
-validateType' vs (RT t) = do
-  ts <- use knownTypes
-  case t of
-    TVar v _ _  | v `notElem` vs         -> throwE (UnknownTypeVariable v)
-    TCon t as _ | Nothing <- lookup t ts -> throwE (UnknownTypeConstructor t)
-                | Just (vs', _) <- lookup t ts
-                , provided <- length as
-                , required <- length vs'
-                , provided /= required
-               -> throwE (TypeArgumentMismatch t provided required)
-                |  Just (_, Just x) <- lookup t ts
-               -> Synonym t <$> mapM (validateType' vs) as  
-    TRecord rp fs s | fields  <- map fst fs
-                 , fields' <- nub fields
-                -> let toRow (T (TRecord rp fs s)) = R (coerceRP rp) (Row.fromList fs) (Left (fmap (const ()) s)) 
-                   in 
-                   if rp /= NonRec && s == Unboxed 
-                   then throwE (RecursiveUnboxedRecord rp s)
-                   else if fields' == fields
-                    then (toRow . T . ffmap toSExpr) <$> mapM (validateType' vs) t
-                    else throwE (DuplicateRecordFields (fields \\ fields'))
-    TVariant fs -> do let tuplize [] = T TUnit
-                          tuplize [x] = x 
-                          tuplize xs  = T (TTuple xs)
-                      TVariant fs' <- ffmap toSExpr <$> mapM (validateType' vs) t 
-                      pure (V (Row.fromMap (fmap (first tuplize) fs')))
-    -- TArray te l -> check l >= 0  -- TODO!!!
-    _ -> T <$> (mmapM (return . toSExpr) <=< mapM (validateType' vs)) t
-
-validateTypes' :: (Traversable t) => [VarName] -> t RawType -> TcErrM TypeError (t TCType)
-validateTypes' vs = mapM (validateType' vs)
-
-
 -- only for error reporting
 flexOf (U x) = Just x
 flexOf (T (TTake _ t))   = flexOf t
@@ -691,16 +652,13 @@ unifVars (R rp r s)
   | Just x <- Row.var r = [x] ++ concatMap unifVars (Row.allTypes r)
                        ++ case s of Left s -> []
                                     Right y -> [y]
-                       ++ case rp of up i -> [i]
+                       ++ case rp of UP i -> [i]
                                      _   -> []
   | otherwise = concatMap unifVars (Row.allTypes r)
                        ++ case s of Left s -> []
                                     Right y -> [y]
-                       ++ case rp of up i -> [i]
+                       ++ case rp of UP i -> [i]
                                      _   -> []
-<<<<<<< HEAD
-<<<<<<< HEAD
-<<<<<<< HEAD
 #ifdef BUILTIN_ARRAYS
 unifVars (A t l s tkns) = unifVars t ++ (case s of Left s -> []; Right y -> [y])
 #endif
@@ -774,8 +732,8 @@ isTypeLayoutExprCompatible env (T (TCon n [] Unboxed)) (DLPrim rs) =
             "U64" -> 64
             "Bool" -> 1)
    in s' <= s
-isTypeLayoutExprCompatible env (T (TRecord fs1 Boxed{})) DLPtr = True
-isTypeLayoutExprCompatible env (T (TRecord fs1 Unboxed)) (DLRecord fs2) =
+isTypeLayoutExprCompatible env (T (TRecord _ fs1 Boxed{})) DLPtr = True
+isTypeLayoutExprCompatible env (T (TRecord _ fs1 Unboxed)) (DLRecord fs2) =
   all
     (\((n1,(t,_)),(n2,_,l)) -> n1 == n2 && isTypeLayoutExprCompatible env t l)
     (zip (sortOn fst fs1) (sortOn fst3 fs2))
@@ -800,16 +758,3 @@ isTypeLayoutExprCompatible env t (DLRepRef n)   =
     Just (l, _) -> isTypeLayoutExprCompatible env t l
     Nothing     -> False  -- TODO(dargent): this really shoud be an exceptional state
 isTypeLayoutExprCompatible _ t l = trace ("t = " ++ show t ++ "\nl = " ++ show l) False
-
-=======
-unifVars (RPar v m) = concat $ fmap unifVars m
-unifVars (T x) = foldMap unifVars x
->>>>>>> ac88d7d3... compiler: Ported recursive tpyes to core language
-=======
-unifVars (RPar v (Just m)) = concat $ M.map unifVars m
-unifVars (RPar _ _) = []
-unifVars (T x) = foldMap unifVars x
->>>>>>> 5425e8f5... compiler: recursive types inference in core language
-=======
-unifVars (T x) = foldMap unifVars x
->>>>>>> 460716aa... compiler: Fix up surface type checker to make recursive types alpha equivalent; Basic code generation for recursive types

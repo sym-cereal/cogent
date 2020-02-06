@@ -25,7 +25,7 @@ import Data.Monoid hiding (Alt)
 import Prelude hiding (lookup)
 
 data AssignResult = Type TCType 
-                  | Sigil (Sigil ())
+                  | Sigil (Sigil (Maybe DataLayoutExpr))
                   | Row (Row.Row TCType)
 #ifdef BUILTIN_ARRAYS
                   | ARow (ARow.ARow TCExpr)

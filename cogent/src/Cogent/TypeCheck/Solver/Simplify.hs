@@ -135,9 +135,8 @@ simplify axs = Rewrite.pickOne' $ onGoal $ \c -> case c of
     , Just m' <- elemIndex m primTypeCons
     , n' <= m' , not (m `elem` ["String","Bool"]) -> hoistMaybe $ Just []
 
-  -- Dropping for recPars
-  -- TODO: Share? Escape?
-  Drop (T (TRPar _ True _)) m -> Just []
+  Drop  (T (TRPar _ True _)) m -> hoistMaybe $ Just []
+  Share (T (TRPar _ True _)) m -> hoistMaybe $ Just []
 
   -- [amos] New simplify rule:
   -- If both sides of an equality constraint are equal, we can't completely discharge it;
@@ -179,7 +178,7 @@ simplify axs = Rewrite.pickOne' $ onGoal $ \c -> case c of
 
   R rp1 r1 s1 :< R rp2 r2 s2 
                      | Row.null r1 && Row.null r2 && s1 == s2 && sameRecursive rp1 rp2  -> hoistMaybe $ Just []
-                     | Just (r1',r2') <- extractVariableEquality r1 r2 -> hoistMaybe $ Just [R r1' s1 :=: R r2' s2]
+                     | Just (r1',r2') <- extractVariableEquality r1 r2 -> hoistMaybe $ Just [R rp1 r1' s1 :=: R rp2 r2' s2]
                      | otherwise -> do
     let commons  = Row.common r1 r2
         (ls, rs) = unzip commons

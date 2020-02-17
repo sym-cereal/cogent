@@ -145,9 +145,9 @@ simplify axs = Rewrite.pickOne' $ onGoal $ \c -> case c of
   t :=: u | t == u -> 
     if isSolved t then 
       hoistMaybe $ Just [] 
-    else do
-      t' <- fullyNormalise t
-      pure Just [Solved t']
+    else
+      --t' <- fullyNormalise t
+      hoistMaybe $ Just [Solved t]
 
   Solved t | isSolved t -> hoistMaybe $ Just []
 
@@ -246,13 +246,16 @@ simplify axs = Rewrite.pickOne' $ onGoal $ \c -> case c of
   T (TRPar v1 b1 (Just m1)) :<  T (TRPar v2 b2 (Just m2)) -> hoistMaybe $ Just [ ifBang b1 (m1 M.! v1) :< ifBang b2 (m2 M.! v2) ]
   T (TRPar v1 b1 (Just m1)) :=: T (TRPar v2 b2 (Just m2)) -> hoistMaybe $ Just [ ifBang b1 (m1 M.! v1) :=: ifBang b2 (m2 M.! v2) ]
 
-  T (TRPar v1 b1 Nothing) :<  T (TRPar v2 b2 Nothing) | b1 == b2 -> hoistMaybe $ Just []
-  T (TRPar v1 b1 Nothing) :=: T (TRPar v2 b2 Nothing) | b1 == b2 -> hoistMaybe $ Just []
+  T (TRPar v1 b1 Nothing) :<  T (TRPar v2 b2 Nothing) | b1 == b2  -> hoistMaybe $ Just []
+                                                      | otherwise -> hoistMaybe $ Nothing
+  T (TRPar v1 b1 Nothing) :=: T (TRPar v2 b2 Nothing) | b1 == b2  -> hoistMaybe $ Just []
+                                                      | otherwise -> hoistMaybe $ Nothing
 
-  T (TRPar v b m) :< x  -> hoistMaybe $ Just [unroll v b m :< x]
-  x :< T (TRPar v b m)  -> hoistMaybe $ Just [x :< unroll v b m]
-  x :=: T (TRPar v b m) -> hoistMaybe $ Just [x :=: unroll v b m]
-  T (TRPar v b m) :=: x -> hoistMaybe $ Just [unroll v b m :=: x]
+
+  T (TRPar v b m) :< x  | not $ wobbly x -> hoistMaybe $ Just [unroll v b m :< x]
+  x :< T (TRPar v b m)  | not $ wobbly x -> hoistMaybe $ Just [x :< unroll v b m]
+  x :=: T (TRPar v b m) | not $ wobbly x -> hoistMaybe $ Just [x :=: unroll v b m]
+  T (TRPar v b m) :=: x | not $ wobbly x -> hoistMaybe $ Just [unroll v b m :=: x]
 
   UnboxedNotRecursive (R None _ (Left Unboxed))     -> hoistMaybe $ Just []
   UnboxedNotRecursive (R _ _    (Left (Boxed _ _))) -> hoistMaybe $ Just []
@@ -292,10 +295,8 @@ isSolved t = L.null (unifVars t)
           && L.null (unknowns t)
 #endif
 
-fullyNormalise :: Type -> Rewrite.RewriteT TcSolvM TCType
+fullyNormalise :: TCType -> Rewrite.RewriteT TcSolvM TCType
 fullyNormalise t = undefined
-  
-
 
 normaliseSExpr :: TCSExpr -> Maybe Int
 normaliseSExpr (SU _ x) = Nothing

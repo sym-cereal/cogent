@@ -19,13 +19,38 @@ begin
 context update_sem_init
 begin
 
+ML \<open> 
+
+fun list_assoc_add (l : (''a * 'b list) list) (k : ''a) (v : 'b) =
+  case l of
+   [] => [ (k, [v])]
+| (k' , t) :: q => 
+  if (k' = k) then
+     (k, v :: t) :: q
+  else
+     (k' , t) :: list_assoc_add q k v ;
+
+fun list_to_assoc (l : (''a * 'b) list) : (''a * 'b list) list =
+  List.foldl (fn ((k,t), acc) => list_assoc_add acc k t) [] l
+(*
+fun list_remove_dup_key (l : (''a * 'b) list) : (''a * 'b) list =
+   case l of
+    [] => []
+  | (k : ''a, t) :: q => (k, t) ::  
+   (list_remove_dup_key (List.filter 
+       (fn x => case x of (k' :''a, _) => (k <> k')) q))
+*)
+\<close>
+
 ML\<open> fun mk_lems file_nm ctxt  =
  let
   val thy = Proof_Context.theory_of ctxt;
   val uvals                 = read_table file_nm thy;
   val num_of_uvals          = List.length uvals;
   fun get_nth_uval nth      = List.nth (uvals, nth);
-  fun get_urecord_lems uv   = mk_urecord_lems_for_uval file_nm ctxt uv;
+  fun get_urecord_lems uv   =    
+    (mk_urecord_lems_for_uval ctxt uv) @
+     (mk_urecord_fields_lems_for_uval file_nm ctxt uv) ;
   fun get_case_lems uv      = mk_case_lems_for_uval file_nm ctxt uvals uv;
   val (lemss:lem list list) = List.tabulate (num_of_uvals, fn struct_num =>
     (tracing ("mk_lems started working on mk_specialised for struct_number " ^ string_of_int struct_num ^
@@ -37,8 +62,8 @@ ML\<open> fun mk_lems file_nm ctxt  =
  in
   List.concat lemss
    |> map (fn v => (#name v, v))
-   |> Symtab.make_list |> Symtab.dest
-   |> map (fn (nm, xs) => let
+   |> list_to_assoc
+   |> map (fn (nm, (xs : lem list)) => let
        val fst_x = hd xs;
        val _ = map (fn x => (#prop x aconv #prop fst_x) orelse
              raise TERM ("lemmas: non duplicate for " ^ nm, [#prop x, #prop fst_x])) xs

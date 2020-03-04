@@ -323,14 +323,58 @@ ML\<open> fun mk_specialised_corres_member (field_num:int) uval file_nm ctxt =
  in member_term end;
 \<close>
 
-ML\<open> fun mk_urecord_lems_for_uval file_nm ctxt (uval:uval) =
+(* Goal: produce a statement of this shape:
+" \<Xi>', \<sigma> \<turnstile>* fs :ur ts \<langle>r, w\<rangle> \<Longrightarrow>
+  type_rel (RRecord (map (\<lambda>(_, b, _). type_repr b) ts)) TYPE(t1_C) \<Longrightarrow> 
+  type_rel (RRecord (map snd fs)) TYPE(t1_C)"
+
+needed for take_boxed and  let_put_boxed
+*)
+ML\<open> fun mk_specialised_corres_uval_typing_record_type_rel uval  ctxt =
+(* Generate specialised Take lemmas for the Writables and Unboxeds.*)
+ let
+  (* define auxiliary values and functions.*)
+  val struct_C_nm     = get_ty_nm_C uval;
+  
+  val struct_C_ptr_ty = Syntax.read_typ ctxt (struct_C_nm);
+ (*
+  val struct_ty       = Syntax.read_typ ctxt struct_C_nm;
+  val ml_sigil        = get_uval_sigil uval;
+*)
+
+  (* Unboxed-Take and Boxed-Take use different types.*)
+  val ty = struct_C_ptr_ty
+(*  case ml_sigil of
+            Writable => struct_C_ptr_ty
+          | Unboxed  => struct_ty
+          | _        => error "ty in mk_specialised_uval_typing_record_type_rel failed."; *)
+
+  (* define meta-assumptions in specialised corres lemmas.*)
+  val ass1 = @{term "\<Xi>', \<sigma> \<turnstile>* fs :ur ts \<langle>r, w\<rangle>" } ;
+  val ass2 = strip_atype @{term "\<lambda>  ty . type_rel (RRecord (map (\<lambda>(_, b, _). type_repr b) ts)) ty"}
+             $ (Const ("Pure.type", Term.itselfT ty) |> strip_atype);
+
+  val prms = map (HOLogic.mk_Trueprop o strip_atype)
+   [ass1, ass2];
+  (* define the conclusion of the lemma.*)
+  val cncl = HOLogic.mk_Trueprop ( strip_atype (strip_atype @{term "\<lambda>  ty . type_rel (RRecord (map snd fs)) ty"}
+             $ (Const ("Pure.type", Term.itselfT ty) |> strip_atype)));
+   
+  val take_term = mk_meta_imps prms cncl ctxt |> Syntax.check_term ctxt;
+  val _ = tracing ("    finished mk_specialised_uval_typing_record_type_rel for struct " ^ (get_uval_name uval) );
+ in take_term
+ end;
+\<close>
+
+
+ML\<open> fun mk_urecord_fields_lems_for_uval file_nm ctxt (uval:uval) =
 (* specialised-lemma generation for nth struct.*)
 (* All uvals can reach this function. I have to filter them at some point.*)
  let
   val thy = Proof_Context.theory_of ctxt;
   val ml_sigil    = get_uval_sigil uval;
   val struct_C_nm = get_ty_nm_C uval;
-  val _ = tracing ("mk_urecord_lems_for_uval is generating lems for " ^ struct_C_nm)
+  val _ = tracing ("mk_urecord_fields_lems_for_uval is generating lems for " ^ struct_C_nm)
   val heap = Symtab.lookup (HeapInfo.get thy) file_nm
               |> Option.map #heap_info;
   fun get_structs heap = Symtab.lookup (#structs heap) struct_C_nm : 'a option;
@@ -407,6 +451,24 @@ ML\<open> fun mk_urecord_lems_for_uval file_nm ctxt (uval:uval) =
   urecord_lems_for_nth_struct : lem list
  end;
 \<close>
+
+ML \<open> fun mk_urecord_lems_for_uval ctxt (uval:uval)  = let
+  val struct_C_nm : string = get_ty_nm_C uval;
+  val _ = tracing ("mk_urecord_lems_for_uval is generating lems for " ^ struct_C_nm)
+ in
+  case get_uval_sigil uval of
+   Unboxed => [ ]
+ | _  => 
+  let 
+    val lemma : lem = { 
+      name      = "corres_uval_typing_record_type_rel" ^ struct_C_nm,
+      bucket    = TypingRecordRel,
+      prop      = mk_specialised_corres_uval_typing_record_type_rel uval ctxt,
+      mk_tactic = (fn ctxt  => corres_uval_typing_record_type_rel_tac ctxt 1) } ;
+  in 
+    [lemma]
+  end
+end ; \<close>
 
 end
 

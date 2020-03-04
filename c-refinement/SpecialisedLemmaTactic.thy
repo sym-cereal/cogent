@@ -204,6 +204,49 @@ ML\<open> fun corres_case_tac ctxt = SUBGOAL (fn (t, i) => let
     end i)
 \<close>
 
+(*
+does the following proof:
+
+" \<Xi>', \<sigma> \<turnstile>* fs :ur ts \<langle>r, w\<rangle> \<Longrightarrow>
+  type_rel (RRecord (map (\<lambda>(_, b, _). type_repr b) ts)) TYPE(t1_C) \<Longrightarrow> 
+  type_rel (RRecord (map snd fs)) TYPE(t1_C)"
+
+  apply (induct rule: simple_uval_typing_record_inducts)
+    apply simp
+   apply (simp add:type_rel_t1_C_def)
+   apply (erule  u_t_r_emptyE', simp)
+  apply (simp add:type_rel_t1_C_def)
+  apply auto
+  done
+*)
+ML\<open>
+ fun corres_uval_typing_record_type_rel_tac ctxt = let
+    val type_rels  = TypeRelSimp.get ctxt;
+     val get = Proof_Context.get_thm ctxt;
+    val u_t_r_emptyE' = get "u_t_r_emptyE'" ;
+    val _ = warning "niiice";
+  in
+    EVERY' [ 
+(tracing "1" ;
+     (*   apply (induct rule: simple_uval_typing_record_inducts) *)
+       (Induct.induct_tac ctxt true [] [] [] 
+          (SOME [(get "simple_uval_typing_record_inducts")]
+                (*   using @{thms ..} lead to strange error @{thms simple_uval_typing_record_inducts} *)
+           ) []) 
+               (* apply simp 
+                apply (simp add:type_rel_*_def) 
+                apply (simp add:type_rel_t1_C_def)
+*)
+         THEN_ALL_NEW (* SOLVED' *) (asm_full_simp_tac (ctxt addsimps type_rels)) ),
+        (* apply (erule  u_t_r_emptyE', simp) *)
+         rtac u_t_r_emptyE' THEN_ALL_NEW (* SOLVED' *) (asm_full_simp_tac ctxt),
+ (tracing "3" ; rtac u_t_r_emptyE' THEN_ALL_NEW 
+(tracing "4" ; atac))
+
+ ]
+  end
+\<close>
+
 end
 
 end

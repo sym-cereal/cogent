@@ -32,7 +32,18 @@ ML\<open> datatype bucket =
 | ValRelSimp
 | IsValidSimp
 | TypeRelSimp
-| HeapSimp \<close>
+| HeapSimp 
+(* 
+ Goal: produce a statement of this shape:
+" \<Xi>', \<sigma> \<turnstile>* fs :ur ts \<langle>r, w\<rangle> \<Longrightarrow>
+  type_rel (RRecord (map (\<lambda>(_, b, _). type_repr b) ts)) TYPE(t1_C) \<Longrightarrow> 
+  type_rel (RRecord (map snd fs)) TYPE(t1_C)"
+
+needed for take_boxed and  let_put_boxed
+*)
+
+| TypingRecordRel
+\<close>
 
 ML\<open> fun bucket_to_string bucket = case bucket of
   TakeBoxed   => "TakeBoxed"
@@ -49,6 +60,7 @@ ML\<open> fun bucket_to_string bucket = case bucket of
 | IsValidSimp => "IsValidSimp"
 | TypeRelSimp => "TypeRelSimp"
 | HeapSimp    => "HeapSimp"
+| TypingRecordRel => "TypingRecordRel"
 \<close>
 
 ML\<open> structure Unborn_Thms = Proof_Data
@@ -110,11 +122,17 @@ ML \<open> structure HeapSimp = Named_Thms_Ext
  (val name = @{binding "HeapSimp"}
   val description = "Simplification rules about heap relation.") \<close>
 
+ML \<open> structure TypingRecordRel = Named_Thms_Ext
+ (val name = @{binding "TypingRecordRel"}
+  val description = "Update semantics preserve typing relation.") \<close>
+
+
+
 setup\<open> (* Set up lemma buckets.*)
  TakeBoxed.setup o TakeUnboxed.setup o PutUnboxed.setup o PutBoxed.setup o
  MemberReadOnly.setup o MemberBoxed.setup o Case.setup o
  ValRelSimp.setup o IsValidSimp.setup o
- TypeRelSimp.setup o HeapSimp.setup \<close>
+ TypeRelSimp.setup o HeapSimp.setup o TypingRecordRel.setup\<close>
 
 ML\<open> fun local_setup_add_thm bucket thm = case bucket of
   TakeBoxed     => TakeBoxed.add_local thm
@@ -129,6 +147,7 @@ ML\<open> fun local_setup_add_thm bucket thm = case bucket of
 | TypeRelSimp   => TypeRelSimp.add_local thm
 | HeapSimp      => HeapSimp.add_local thm
 | Case          => Case.add_local thm
+| TypingRecordRel => TypingRecordRel.add_local thm
 | _             => error "add_thm in Value_Relation_Generation.thy failed."
 \<close>
 
@@ -145,6 +164,7 @@ ML\<open> fun setup_add_thm bucket thm = case bucket of
 | IsValidSimp   => IsValidSimp.add_thm thm |> Context.theory_map
 | TypeRelSimp   => TypeRelSimp.add_thm thm |> Context.theory_map
 | HeapSimp      => HeapSimp.add_thm thm    |> Context.theory_map
+| TypingRecordRel  => TypingRecordRel.add_thm thm    |> Context.theory_map
 | _             => error "add_thm in SpecialisedLemmaForTakePut.thy failed."
 \<close>
 
@@ -163,7 +183,8 @@ ML\<open> val local_setup_put_lemmas_in_bucket =
     note "member_readonly" MemberReadOnly.get #>
     note "case" Case.get #>
     note "is_valid_simp" IsValidSimp.get #>
-    note "heap_simp" HeapSimp.get
+    note "heap_simp" HeapSimp.get #>
+    note "typing_record_rel" TypingRecordRel.get
   end;
 \<close>
 

@@ -304,6 +304,11 @@ inductive_cases u_t_recE      [elim] : "\<Xi>, \<sigma> \<turnstile> URecord fs 
 inductive_cases u_t_p_recE    [elim] : "\<Xi>, \<sigma> \<turnstile> UPtr p rp ptrl :u TRecord fs s \<langle>r, w\<rangle>"
 inductive_cases u_t_r_emptyE  [elim] : "\<Xi>, \<sigma> \<turnstile>* [] :ur \<tau>s \<langle>r, w\<rangle>"
 inductive_cases u_t_r_consE   [elim] : "\<Xi>, \<sigma> \<turnstile>* (x # xs) :ur \<tau>s \<langle>r, w\<rangle>"
+inductive_cases u_t_r_emptyE'  [elim] : "\<Xi>', \<sigma> \<turnstile>* xs :ur [] \<langle>r, w\<rangle>"
+
+(* useful for TODO *)
+lemmas simple_uval_typing_record_inducts[consumes 1] =
+  uval_typing_uval_typing_record.inducts(2)[where ?P1.0="\<lambda>_ _ _ _ _ _. True", simplified]
 
 inductive uval_typing_all :: "('f \<Rightarrow> poly_type)
                             \<Rightarrow> ('f, 'a, 'l) store

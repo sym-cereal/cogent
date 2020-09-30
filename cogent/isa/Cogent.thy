@@ -337,7 +337,12 @@ datatype 'f expr = Var index
                  | Split "'f expr" "'f expr"
                  | Promote type "'f expr"
                  | ArrayIndex "'f expr" "'f expr"
-                 | ArrayMap2 "'f expr" "('f expr \<times> 'f expr)"
+                 | ArrayPut "'f expr" "'f expr" "'f expr" 
+                 (* function, first array, second array*)
+                 | ArrayMap2 "'f expr" "'f expr" "'f expr"
+               (*  | ArrayCon (* type *) "'f expr list"
+                 | ArrayPut "'f expr" "'f expr" "'f expr" 
+| ArrayCon "'f expr [ 'n ]" *)
 
 section {* Kinds *}
 
@@ -420,7 +425,7 @@ fun kinding_fn :: "kind env \<Rightarrow> type \<Rightarrow> kind" where
 | "kinding_fn K TUnit            = UNIV"
 | "kinding_fn K (TArray t l s)   = (kinding_fn K t) \<inter> (sigil_kind s)"
 
-lemmas kinding_fn_induct = kinding_fn.induct[case_names kind_tvar kind_tvarb kind_tcon kind_tfun kind_tprim kind_tsum kind_tprod kind_trec kind_tunit]
+lemmas kinding_fn_induct = kinding_fn.induct[case_names kind_tvar kind_tvarb kind_tcon kind_tfun kind_tprim kind_tsum kind_tprod kind_trec kind_tunit kind_tarr]
 
 
 definition kinding :: "kind env \<Rightarrow> type \<Rightarrow> kind \<Rightarrow> bool" ("_ \<turnstile> _ :\<kappa> _" [30,0,30] 60) where
@@ -497,7 +502,8 @@ fun specialise :: "type substitution \<Rightarrow> 'f expr \<Rightarrow> 'f expr
 | "specialise \<delta> (Split v va)      = Split (specialise \<delta> v) (specialise \<delta> va)"
 | "specialise \<delta> (Promote t x)     = Promote (instantiate \<delta> t) (specialise \<delta> x)"
 | "specialise \<delta> (ArrayIndex a i)  = ArrayIndex (specialise \<delta> a) (specialise \<delta> i)"
-| "specialise \<delta> (ArrayMap2 f (a1,a2)) = ArrayMap2 (specialise \<delta> f) (specialise \<delta> a1, specialise \<delta> a2)"
+| "specialise \<delta> (ArrayPut a i e)  = ArrayPut (specialise \<delta> a) (specialise \<delta> i) (specialise \<delta> e)"
+| "specialise \<delta> (ArrayMap2 f a1 a2) = ArrayMap2 (specialise \<delta> f) (specialise \<delta> a1) (specialise \<delta> a2)"
 
 
 section {* Subtyping *}
@@ -534,6 +540,7 @@ inductive subtyping :: "kind env \<Rightarrow> type \<Rightarrow> type \<Rightar
 | subty_tarray : "\<lbrakk> K \<turnstile> t1 \<sqsubseteq> t2
                   ; s1 = s2
                   ; l1 = l2
+                   \<comment> \<open> TODO: manage the hole, as in subty_record\<close>                
                   \<rbrakk> \<Longrightarrow> K \<turnstile> TArray t1 l1 s1 \<sqsubseteq> TArray t2 l2 s2"
 
 
@@ -855,20 +862,36 @@ typing_var    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto>w singleton (length
 | typing_array_index : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>2
                         ; \<Xi>, K, \<Gamma>1 \<turnstile> arr : TArray t l s
                         ; K \<turnstile> TArray t l s :\<kappa> k
-                        ; S \<in> k
+                        ; D \<in> k
                         ; \<Xi>, K, \<Gamma>2 \<turnstile> idx : TPrim (Num U32)
                         \<comment> \<open>also under some context, `idx' evaluates to `v' and `v < l'\<close>
                         \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayIndex arr idx : t"
 
-| typing_array_map2 : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>0 | \<Gamma>1
-                       ; K \<turnstile> \<Gamma>1 \<leadsto> \<Gamma>11 | \<Gamma>12
-                       ; \<Xi>, K, \<Gamma>11 \<turnstile> arr1 : TArray t1 l1 s1
-                       ; \<Xi>, K, \<Gamma>12 \<turnstile> arr2 : TArray t2 l2 s2
-                       ; s1 = Boxed Writable _
-                       ; s2 = Boxed Writable _
+| typing_array_put_discard    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'
+                   ; K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>3
+                   ; \<Xi>, K, \<Gamma>1 \<turnstile> arr : TArray t l s
+                   ; sigil_perm s \<noteq> Some ReadOnly
+                   ; K \<turnstile> t :\<kappa> k
+                   ; D \<in> k
+                   ; \<Xi>, K, \<Gamma>2 \<turnstile> idx : TPrim (Num U32)
+                    \<comment> \<open>also under some context, `idx' evaluates to `v' and `v < l'\<close>                    
+                   ; \<Xi>, K, \<Gamma>3 \<turnstile> e : t
+                    \<comment> \<open>the hole should be removed if it was set at this place \<close>
+                   \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayPut arr idx e : TArray t l s"
+
+
+
+| typing_array_map2 : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'
+                       ; K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>3
+                       ; \<Xi>, K, \<Gamma>2 \<turnstile> arr1 : TArray t1 l1 s1
+                       ; \<Xi>, K, \<Gamma>3 \<turnstile> arr2 : TArray t2 l2 s2
+                       ; sigil_perm s1 \<noteq> Some ReadOnly                       
+                       ; sigil_perm s2 \<noteq> Some ReadOnly
+                        \<comment> \<open>sigil_perm s2 \<noteq> Some ReadOnly \<close>
                        ; \<Xi>, K, Some t1 # Some t2 # \<Gamma>1 \<turnstile> f : TProduct t1 t2
                        ; K \<turnstile> \<Gamma>1 consumed
-                       \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayMap f (arr1, arr2) : TProduct (TArray t1 l1 s1) (TArray t2 l2 s2)"
+                       \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayMap2 f arr1 arr2 : TProduct (TArray t1 l1 s1) (TArray t2 l2 s2)"
+
 
 
 inductive_cases typing_num     [elim]: "\<Xi>, K, \<Gamma> \<turnstile> e : TPrim (Num \<tau>)"
@@ -893,10 +916,13 @@ inductive_cases typing_structE [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Struct t
 inductive_cases typing_letbE   [elim]: "\<Xi>, K, \<Gamma> \<turnstile> LetBang vs a b : \<tau>"
 inductive_cases typing_takeE   [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Take x f e : \<tau>"
 inductive_cases typing_putE    [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Put x f e : \<tau>"
-inductive_cases typing_splitE  [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Split x e : \<tau>"
-inductive_cases typing_promoteE[elim]: "\<Xi>, K, \<Gamma> \<turnstile> Promote \<tau>' x : \<tau>"
-inductive_cases typing_all_emptyE [elim]: "\<Xi>, K, \<Gamma> \<turnstile>* []       : \<tau>s"
-inductive_cases typing_all_consE  [elim]: "\<Xi>, K, \<Gamma> \<turnstile>* (x # xs) : \<tau>s"
+inductive_cases typing_array_indexE [elim]: "\<Xi>, K, \<Gamma> \<turnstile> ArrayIndex a i : \<tau>"
+inductive_cases typing_array_putE [elim]: "\<Xi>, K, \<Gamma> \<turnstile> ArrayPut a i e : \<tau>"
+inductive_cases typing_array_map2E [elim]: "\<Xi>, K, \<Gamma> \<turnstile> ArrayMap2 f a1 a2 : \<tau>"
+inductive_cases typing_splitE       [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Split x e : \<tau>"
+inductive_cases typing_promoteE     [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Promote \<tau>' x : \<tau>"
+inductive_cases typing_all_emptyE   [elim]: "\<Xi>, K, \<Gamma> \<turnstile>* []       : \<tau>s"
+inductive_cases typing_all_consE    [elim]: "\<Xi>, K, \<Gamma> \<turnstile>* (x # xs) : \<tau>s"
 
 section {* Syntax structural judgements *}
 
@@ -948,18 +974,21 @@ datatype repr = RPtr repr
               | RSum "(name \<times> repr) list"
               | RProduct "repr" "repr"
               | RRecord "repr list"
+              | RArray "repr" nat
               | RUnit
 
 fun type_repr :: "type \<Rightarrow> repr" where
-  "type_repr (TFun t t')          = RFun"
-| "type_repr (TPrim t)            = RPrim t"
-| "type_repr (TSum ts)            = RSum (map (\<lambda>(a,b,_).(a, type_repr b)) ts)"
-| "type_repr (TProduct a b)       = RProduct (type_repr a) (type_repr b)"
-| "type_repr (TCon n ts Unboxed)  = RCon n (map type_repr ts)"
-| "type_repr (TCon n ts _)        = RPtr (RCon n (map type_repr ts))"
-| "type_repr (TRecord ts Unboxed) = RRecord (map (\<lambda>(_,b,_). type_repr b) ts)"
-| "type_repr (TRecord ts _)       = RPtr (RRecord (map (\<lambda>(_,b,_). type_repr b) ts))"
-| "type_repr (TUnit)              = RUnit"
+  "type_repr (TFun t t')            = RFun"
+| "type_repr (TPrim t)              = RPrim t"
+| "type_repr (TSum ts)              = RSum (map (\<lambda>(a,b,_).(a, type_repr b)) ts)"
+| "type_repr (TProduct a b)         = RProduct (type_repr a) (type_repr b)"
+| "type_repr (TCon n ts Unboxed)    = RCon n (map type_repr ts)"
+| "type_repr (TCon n ts _)          = RPtr (RCon n (map type_repr ts))"
+| "type_repr (TRecord ts Unboxed)   = RRecord (map (\<lambda>(_,b,_). type_repr b) ts)"
+| "type_repr (TRecord ts _)         = RPtr (RRecord (map (\<lambda>(_,b,_). type_repr b) ts))"
+| "type_repr (TUnit)                = RUnit"
+| "type_repr (TArray t n Unboxed)   = undefined" (* TODO: array litterals *)
+| "type_repr (TArray t n _)         = RPtr (RArray (type_repr t) n)"
 
 
 section {* Wellformed lemmas *}
@@ -1303,6 +1332,11 @@ next
   then show ?case
     using bang_sigil_kind
     by (fastforce simp add: list_all_iff simp del: insert_subset split: record_state.split)
+next
+  case (kind_tarr K ts n s)
+  then show ?case
+    using bang_sigil_kind
+    by (fastforce simp add: list_all_iff simp del: insert_subset )
 qed auto
 
 lemma bang_kind:
@@ -1328,6 +1362,11 @@ lemma subtyping_simps:
                     \<and> list_all2 (record_kind_subty K) ts1 ts2
                     \<and> map fst ts1 = map fst ts2
                     \<and> s1 = s2"
+  "\<And>t1 n1 s1 t2 n2 s2. K \<turnstile> TArray t1 n1 s1 \<sqsubseteq> TArray t2 n2 s2
+                    \<longleftrightarrow> K \<turnstile> t1 \<sqsubseteq> t2                    
+                    \<and> n1 = n2
+                    \<and> s1 = s2"
+
   "\<And>t1 u1 t2 u2. K \<turnstile> TProduct t1 u1 \<sqsubseteq> TProduct t2 u2 \<longleftrightarrow> K \<turnstile> t1 \<sqsubseteq> t2 \<and> K \<turnstile> u1 \<sqsubseteq> u2"
   "\<And>ts1 ts2. K \<turnstile> TSum ts1 \<sqsubseteq> TSum ts2
                     \<longleftrightarrow> list_all2 (\<lambda>p1 p2. subtyping K (fst (snd p1)) (fst (snd p2))) ts1 ts2
@@ -1406,6 +1445,10 @@ next
 next
   case subty_tsum then show ?case
     by (slowsimp intro!: subtyping.intros simp add: list_all2_conv_all_nth list_all_length split: prod.splits)
+next
+  case subty_tarray then show ?case
+     by (slowsimp simp add: subtyping_simps list_all2_conv_all_nth list_all_length le_less split: prod.splits)
+    
 qed (simp add: subtyping_simps)+
 
 
@@ -1572,6 +1615,18 @@ next
   ultimately show ?case
     using p_elims r_elims
     by (simp add: sat_p_r list_all2_conv_all_nth subty_trecord)
+next
+  case (TArray t l s)
+  obtain t' where p_elims:
+    "p = TArray t' l s"
+    "K \<turnstile> t' \<sqsubseteq> t"
+    using TArray.prems by (auto elim: subtyping.cases)
+  moreover obtain t'' where r_elims:
+    "r = TArray t'' l s"
+    "K \<turnstile> t \<sqsubseteq> t''"
+    using TArray.prems by (auto elim: subtyping.cases)    
+  show ?case    
+    by (simp add: TArray.hyps p_elims r_elims subty_tarray)
 qed (fast elim: subtyping.cases)+
 
 
@@ -1585,6 +1640,12 @@ next
   case (subty_tsum K ts1 ts2)
   then show ?case
     by (induct rule: list_all2_induct; auto)
+next
+  case (subty_tarray K t1 t2 s1 s2 l1 l2)
+  then show ?case
+    by (cases s1;  auto)
+    
+    
 qed auto
 
 lemma subtyping_preserves_type_repr_map:
@@ -2157,6 +2218,11 @@ next
   case (TRecord ts s)
   then show ?case
     by (cases s, rename_tac p l, case_tac p; auto simp add: list_all_iff)
+next
+  case (TArray t l s)
+  then show ?case
+    by (cases s, rename_tac p l, case_tac p; auto)
+
 qed (auto simp add: list_all_iff)
 
 lemma wellformed_bang_type_repr[simp]:
@@ -2264,6 +2330,9 @@ fun expr_size :: "'f expr \<Rightarrow> nat" where
 | "expr_size (Case x v a b) = Suc ((expr_size x) + (expr_size a) + (expr_size b))"
 | "expr_size (Take x f y) = Suc ((expr_size x) + (expr_size y))"
 | "expr_size (Promote t x) = Suc (expr_size x)"
+| "expr_size (ArrayIndex a i) = Suc ((expr_size a) + (expr_size i))"
+| "expr_size (ArrayPut a i e) = Suc ((expr_size a) + (expr_size i) + (expr_size e))"
+| "expr_size (ArrayMap2 e a1 a2) = Suc ((expr_size e) + (expr_size a1) + (expr_size a2))"
 
 lemma specialise_size [simp]:
   shows "expr_size (specialise \<tau>s x) = expr_size x"

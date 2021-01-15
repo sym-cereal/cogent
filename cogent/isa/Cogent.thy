@@ -337,6 +337,7 @@ datatype 'f expr = Var index
                  | Split "'f expr" "'f expr"
                  | Promote type "'f expr"
                  | ArrayIndex "'f expr" "'f expr"
+                 | ArrayTake "'f expr" "'f expr" "'f expr"
                  | ArrayPut "'f expr" "'f expr" "'f expr" 
                  (* function, first array, second array*)
                  | ArrayMap2 "'f expr" "'f expr" "'f expr"
@@ -502,6 +503,7 @@ fun specialise :: "type substitution \<Rightarrow> 'f expr \<Rightarrow> 'f expr
 | "specialise \<delta> (Split v va)      = Split (specialise \<delta> v) (specialise \<delta> va)"
 | "specialise \<delta> (Promote t x)     = Promote (instantiate \<delta> t) (specialise \<delta> x)"
 | "specialise \<delta> (ArrayIndex a i)  = ArrayIndex (specialise \<delta> a) (specialise \<delta> i)"
+| "specialise \<delta> (ArrayTake a i e)  = ArrayTake (specialise \<delta> a) (specialise \<delta> i) (specialise \<delta> e)"
 | "specialise \<delta> (ArrayPut a i e)  = ArrayPut (specialise \<delta> a) (specialise \<delta> i) (specialise \<delta> e)"
 | "specialise \<delta> (ArrayMap2 f a1 a2) = ArrayMap2 (specialise \<delta> f) (specialise \<delta> a1) (specialise \<delta> a2)"
 
@@ -622,6 +624,11 @@ definition is_consumed :: "kind env \<Rightarrow> ctx \<Rightarrow> bool" ("_ \<
   "K \<turnstile> \<Gamma> consumed \<equiv> K \<turnstile> \<Gamma> \<leadsto>w empty (length \<Gamma>)"
 
 declare is_consumed_def [simp]
+
+(* kinding for context *)
+
+definition kinding_ctx :: "kind env \<Rightarrow> ctx \<Rightarrow> kind \<Rightarrow> bool" ("_ \<turnstile>* _ :\<kappa>c _" [30,0,30] 60) where
+  "K \<turnstile>* \<Gamma> :\<kappa>c k \<equiv> (\<forall>to \<in> set \<Gamma>. (\<forall>t. to = Some t \<longrightarrow> K \<turnstile> t :\<kappa> k))"
 
 section {* Built-in types *}
 
@@ -867,6 +874,17 @@ typing_var    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto>w singleton (length
                         \<comment> \<open>also under some context, `idx' evaluates to `v' and `v < l'\<close>
                         \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayIndex arr idx : t"
 
+| typing_array_take : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'
+                        ; K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>3
+                        ; \<Xi>, K, \<Gamma>1 \<turnstile> arr : TArray t l s
+                        ; sigil_perm s \<noteq> Some ReadOnly
+                        ; K \<turnstile> t :\<kappa> k
+                        ; S \<in> k
+                        ; \<Xi>, K, \<Gamma>2 \<turnstile> idx : TPrim (Num U32)
+                        ; \<Xi>, K, Some t # Some (TArray t l s) # \<Gamma>3 \<turnstile> e : u
+                        \<comment> \<open>also under some context, `idx' evaluates to `v' and `v < l'\<close>
+                        \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayTake arr idx e : u"
+
 | typing_array_put_discard    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'
                    ; K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>3
                    ; \<Xi>, K, \<Gamma>1 \<turnstile> arr : TArray t l s
@@ -881,16 +899,18 @@ typing_var    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto>w singleton (length
 
 
 
-| typing_array_map2 : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'
-                       ; K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>3
-                       ; \<Xi>, K, \<Gamma>2 \<turnstile> arr1 : TArray t1 l1 s1
-                       ; \<Xi>, K, \<Gamma>3 \<turnstile> arr2 : TArray t2 l2 s2
+| typing_array_map2 : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>a1 | \<Gamma>'
+                       ; K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>a2 | \<Gamma>f
+                       ; \<Xi>, K, \<Gamma>a1 \<turnstile> a1 : TArray t1 l1 s1
+                       ; \<Xi>, K, \<Gamma>a2 \<turnstile> a2 : TArray t2 l2 s2
                        ; sigil_perm s1 \<noteq> Some ReadOnly                       
                        ; sigil_perm s2 \<noteq> Some ReadOnly
                         \<comment> \<open>sigil_perm s2 \<noteq> Some ReadOnly \<close>
-                       ; \<Xi>, K, Some t1 # Some t2 # \<Gamma>1 \<turnstile> f : TProduct t1 t2
-                       ; K \<turnstile> \<Gamma>1 consumed
-                       \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayMap2 f arr1 arr2 : TProduct (TArray t1 l1 s1) (TArray t2 l2 s2)"
+                       ; \<Xi>, K, Some t1 # Some t2 # \<Gamma>f
+                              \<turnstile> f : TProduct t1 t2         
+ \<comment> \<open> K \<turnstile>* ts :\<kappa> k \<close>
+                       ; K \<turnstile>* \<Gamma>f :\<kappa>c {S, D} 
+                       \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> ArrayMap2 f a1 a2 : TProduct (TArray t1 l1 s1) (TArray t2 l2 s2)"
 
 
 
@@ -918,6 +938,7 @@ inductive_cases typing_takeE   [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Take x f
 inductive_cases typing_putE    [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Put x f e : \<tau>"
 inductive_cases typing_array_indexE [elim]: "\<Xi>, K, \<Gamma> \<turnstile> ArrayIndex a i : \<tau>"
 inductive_cases typing_array_putE [elim]: "\<Xi>, K, \<Gamma> \<turnstile> ArrayPut a i e : \<tau>"
+inductive_cases typing_array_takeE [elim]: "\<Xi>, K, \<Gamma> \<turnstile> ArrayTake a i e : \<tau>"
 inductive_cases typing_array_map2E [elim]: "\<Xi>, K, \<Gamma> \<turnstile> ArrayMap2 f a1 a2 : \<tau>"
 inductive_cases typing_splitE       [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Split x e : \<tau>"
 inductive_cases typing_promoteE     [elim]: "\<Xi>, K, \<Gamma> \<turnstile> Promote \<tau>' x : \<tau>"
@@ -1846,12 +1867,15 @@ assumes well_kinded: "list_all2 (kinding K') \<delta> K"
 shows "K \<turnstile>* ts :\<kappa> k  \<Longrightarrow> K' \<turnstile>* map (instantiate \<delta>) ts                :\<kappa> k"
 and   "K \<turnstile>* xs :\<kappa>v k \<Longrightarrow> K' \<turnstile>* map (\<lambda>(n,a,b). (n,instantiate \<delta> a, b)) xs :\<kappa>v k"
 and   "K \<turnstile>* fs :\<kappa>r k \<Longrightarrow> K' \<turnstile>* map (\<lambda>(n,a,b). (n,instantiate \<delta> a, b)) fs :\<kappa>r k"
+and   "K \<turnstile>* \<Gamma> :\<kappa>c k  \<Longrightarrow> K' \<turnstile>* instantiate_ctx \<delta> \<Gamma> :\<kappa>c k"
+
   using substitutivity_single well_kinded instantiate_wellformed
     list_all2_kinding_wellformedD list_all2_lengthD
      apply -
      apply (simp add: kinding_all_set kinding_iff_wellformed)+
    apply (fastforce simp add: kinding_variant_set kinding_iff_wellformed split: variant_state.split)
-  apply (fastforce simp add: kinding_record_set kinding_iff_wellformed split: record_state.split)
+   apply (fastforce simp add: kinding_record_set kinding_iff_wellformed split: record_state.split)
+   apply (fastforce simp add: kinding_ctx_def instantiate_ctx_def)
   done
 
 lemmas substitutivity = substitutivity_single substitutivity_rest
@@ -1942,7 +1966,47 @@ lemma instantiate_ctx_cons [simp]:
 shows   "instantiate_ctx \<delta> (Some x # \<Gamma>) = Some (instantiate \<delta> x) # instantiate_ctx \<delta> \<Gamma>"
 by (simp add: instantiate_ctx_def)
 
+(*
+lemma instantiate_keep_non_linear :
+   assumes  "list_all2 (kinding K') \<delta> K"
+   shows goal: " map_option (instantiate \<delta>') (keep_non_linear K x) = keep_non_linear K' (map_option (instantiate \<delta>') x)"
+  
+  proof(cases x)
+    case None
+    then show ?thesis by (simp add:keep_non_linear_def)
+  next
+    case (Some t)
+    then show ?thesis
 
+      apply( simp add:keep_non_linear_def )
+      using substitutivity_single[OF assms]
+    qed
+    oops *)
+  (*
+  apply (simp add:Option.bind_map_option comp_def)
+  find_theorems map_option Option.bind*)
+(*
+lemma instantiate_ctx_keep_non_linear :
+  assumes  "list_all2 (kinding K') \<delta> K"
+  shows "
+   instantiate_ctx \<delta>' (keep_non_linear_ctx K \<Delta>) =
+       keep_non_linear_ctx K' (instantiate_ctx \<delta>' \<Delta>)"
+  unfolding instantiate_ctx_def keep_non_linear_ctx_def
+  apply simp
+  apply (simp add: List.map.comp)
+  find_theorems map "_ \<circ> _"
+using assms proof (induct rule: list_all2_induct)
+  case Nil  then show ?case 
+    apply
+              (simp add: instantiate_ctx_def keep_non_linear_def keep_non_linear_ctx_def)
+next case Cons then show ?case
+    using instantiate_wellformed list_all2_kinding_wellformedD
+    by (auto simp add: weakening_comp.simps instantiate_ctx_def weakening_Cons
+        dest: substitutivity)
+  thm substitutivity_single
+  oops
+
+*)
 lemma specialisation_subtyping:
   assumes
     "K \<turnstile> t \<sqsubseteq> t'"
@@ -2332,6 +2396,7 @@ fun expr_size :: "'f expr \<Rightarrow> nat" where
 | "expr_size (Take x f y) = Suc ((expr_size x) + (expr_size y))"
 | "expr_size (Promote t x) = Suc (expr_size x)"
 | "expr_size (ArrayIndex a i) = Suc ((expr_size a) + (expr_size i))"
+| "expr_size (ArrayTake a i e) = Suc ((expr_size a) + (expr_size i) + (expr_size e))"
 | "expr_size (ArrayPut a i e) = Suc ((expr_size a) + (expr_size i) + (expr_size e))"
 | "expr_size (ArrayMap2 e a1 a2) = Suc ((expr_size e) + (expr_size a1) + (expr_size a2))"
 

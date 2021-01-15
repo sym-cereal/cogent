@@ -23,6 +23,7 @@ datatype ('f, 'a, 'l) uval = UPrim lit
                            | UAFunction "'f" "type list"
                            | UUnit
                            | UPtr "'l" repr
+(* TODO: remove the repr argument, and see what fails ? *)
                            | UArray "('f,'a,'l) uval list" repr 
 
 (* NB: The "type" in the store is just a tag used for the C proofs.
@@ -56,14 +57,16 @@ and       u_sem_all :: "('f,'a,'l) uabsfuns
                       \<Rightarrow> bool"
           ("_, _ \<turnstile>* _ \<Down>! _" [30,0,0,20] 60)
 and       u_sem_map2 :: "('f,'a,'l) uabsfuns
-                      \<Rightarrow> ('f,'a,'l) uval list \<times>
-                         ('f,'a,'l) uval list \<times>
-                         ('f,'a,'l) uval env
-                      \<Rightarrow> ('f,'a,'l) store \<times> 'f expr 
-                      \<Rightarrow> ('f,'a,'l) store \<times> ('f,'a,'l) uval list
-                                          \<times> ('f,'a,'l) uval list
+                      \<Rightarrow> ('f,'a,'l) uval list
+                      \<Rightarrow> ('f,'a,'l) uval list 
+                      \<Rightarrow> ('f,'a,'l) uval env
+                      \<Rightarrow> ('f,'a,'l) store 
+                      \<times> 'f expr 
+                      \<Rightarrow> ('f,'a,'l) store
+                      \<times> ('f,'a,'l) uval list
+                      \<times> ('f,'a,'l) uval list
                       \<Rightarrow> bool"
-          ("_, _ \<turnstile>m2 _ \<Down>! _ " [30,0,0,20] 60)
+          ("_, _, _, _ \<turnstile>m2 _ \<Down>! _ " [30,0,0,20] 60)
 (* TODO: find a common generalization to u_sem_all and u_sem_map2 *)
 where
   u_sem_var     : "\<xi> , \<gamma> \<turnstile> (\<sigma>, Var i) \<Down>! (\<sigma>, \<gamma> ! i)"
@@ -106,12 +109,18 @@ where
                       ; unat i' < size vs
                    \<rbrakk> \<Longrightarrow> \<xi> , \<gamma> \<turnstile> (\<sigma>, ArrayIndex a i) \<Down>! (\<sigma>'', vs ! unat i')"
 
-| u_sem_array_index_b  : "\<lbrakk> \<xi> , \<gamma> \<turnstile> (\<sigma>, e) \<Down>! (\<sigma>', UPtr p r)
+| u_sem_array_index_b  : "\<lbrakk> \<xi> , \<gamma> \<turnstile> (\<sigma>, a) \<Down>! (\<sigma>', UPtr p r)
                       ; \<sigma>' p = Some ( UArray vs r')
                       ; \<xi> , \<gamma> \<turnstile> (\<sigma>', i) \<Down>! (\<sigma>'', UPrim (LU32 i'))
                       ; unat i' < size vs
                    \<rbrakk> \<Longrightarrow> \<xi> , \<gamma> \<turnstile> (\<sigma>, ArrayIndex a i) \<Down>! (\<sigma>'', vs ! unat i')"
 
+| u_sem_array_take    : "\<lbrakk> \<xi> , \<gamma> \<turnstile> (\<sigma>, a) \<Down>! (\<sigma>', UPtr p r)
+                   ; \<sigma>' p = Some (UArray vs r')
+                   ; \<xi> , \<gamma> \<turnstile> (\<sigma>', i) \<Down>! (\<sigma>'', UPrim (LU32 i'))
+                   ; unat i' < size vs
+                   ; \<xi> ,  ((vs ! unat i') # UPtr p r # \<gamma>) \<turnstile> (\<sigma>'', e) \<Down>! (\<sigma>''', st)                   
+                   \<rbrakk> \<Longrightarrow> \<xi> , \<gamma> \<turnstile> (\<sigma>, ArrayTake a i e) \<Down>! (\<sigma>''', st)"
 
 | u_sem_unit    : "\<xi> , \<gamma> \<turnstile> (\<sigma>, Unit) \<Down>! (\<sigma>, UUnit)"
 
@@ -194,7 +203,7 @@ where
                    ; \<sigma>1 p1 = Some (UArray vs1 r1')
                    ; \<xi> , \<gamma> \<turnstile> (\<sigma>1, a2) \<Down>! (\<sigma>2, UPtr p2 r2)
                    ; \<sigma>2 p2 = Some (UArray vs2 r2') 
-                   ;  \<xi> , (vs1 , vs2 , \<gamma>) \<turnstile>m2 (\<sigma>2, f) \<Down>! (\<sigma>3, vs1', vs2')
+                   ;  \<xi> , vs1 , vs2 , \<gamma> \<turnstile>m2 (\<sigma>2, f) \<Down>! (\<sigma>3, vs1', vs2')
                    \<rbrakk> \<Longrightarrow> \<xi> , \<gamma> \<turnstile> (\<sigma>0, ArrayMap2 f a1 a2 )
                       \<Down>! (\<sigma>3 ( p1 := Some (UArray vs1' r1'), 
                                p2 := Some (UArray vs2' r2')
@@ -209,11 +218,12 @@ where
                      ; \<xi> , \<gamma> \<turnstile>* (\<sigma>', xs) \<Down>! (\<sigma>'', vs)
                      \<rbrakk> \<Longrightarrow>  \<xi> , \<gamma> \<turnstile>* (\<sigma>, x # xs) \<Down>! (\<sigma>'', v # vs)"
 
-| u_sem_map2_empty : "\<xi> , ([], [], \<gamma>) \<turnstile>m2 (\<sigma>, f) \<Down>! (\<sigma>, [], [])"
-| u_sem_map2_cons : "\<lbrakk>  \<xi> , (vs1, vs2, \<gamma>) \<turnstile>m2 (\<sigma>, f) \<Down>! (\<sigma>', vs1', vs2')
+| u_sem_map2_empty : "\<xi> , [], [], \<gamma> \<turnstile>m2 (\<sigma>, f) \<Down>! (\<sigma>, [], [])"
+| u_sem_map2_cons : "\<lbrakk>  \<xi> , vs1, vs2, \<gamma> \<turnstile>m2 (\<sigma>, f) \<Down>! (\<sigma>', vs1', vs2')
+\<comment> \<open>vs1' = vs1 si ce sont des pointeurs\<close>
                      ;  \<xi> , v1 # v2 # \<gamma> \<turnstile>  (\<sigma>' , f) \<Down>! (\<sigma>'' , UProduct v1' v2' )
                      \<rbrakk> \<Longrightarrow>  
-                       \<xi> , (v1 # vs1, v2 # vs2, \<gamma>) \<turnstile>m2 (\<sigma>, f) \<Down>! (\<sigma>'', v1' # vs1', v2' # vs2')"
+                       \<xi> , v1 # vs1, v2 # vs2, \<gamma> \<turnstile>m2 (\<sigma>, f) \<Down>! (\<sigma>'', v1' # vs1', v2' # vs2')"
 
 
 locale update_sem =
@@ -323,6 +333,7 @@ and uval_typing_array :: "('f \<Rightarrow> poly_type)
 | u_t_p_rec_w  : "\<lbrakk> \<Xi>, \<sigma> \<turnstile>* fs :ur ts \<langle>r, w\<rangle>
                   ; \<sigma> l = Some (URecord fs)
                   ; l \<notin> (w \<union> r)
+ \<comment> \<open>l \<notin> (w \<union> r)\<close>
                   ; distinct (map fst ts)
                   \<rbrakk> \<Longrightarrow> \<Xi>, \<sigma> \<turnstile> UPtr l (RRecord (map (type_repr \<circ> fst \<circ> snd) ts)) :u TRecord ts (Boxed Writable ptrl) \<langle>r, insert l w\<rangle>"
 
@@ -509,6 +520,17 @@ and   "\<lbrakk> \<Xi>, \<sigma> \<turnstile>* vs :ua \<tau>  \<langle> r , w \<
   by (induct rule: uval_typing_uval_typing_record_uval_typing_array.inducts)
     (force simp add: kinding_simps kinding_record_simps kinding_variant_set
       dest: abs_typing_readonly[where s = Unboxed,simplified])+
+
+lemma discardable_not_writable_ctx:
+  assumes "D \<in> k"
+  shows  "\<lbrakk> \<Xi>, \<sigma> \<turnstile> xs matches \<Gamma> \<langle> r , w \<rangle>; K \<turnstile>* \<Gamma>   :\<kappa>c  k \<rbrakk> \<Longrightarrow> w = {}"
+  
+  unfolding kinding_ctx_def
+  apply(induct rule: matches_ptrs.inducts)
+   using assms discardable_not_writable
+
+  by (fastforce )+
+  
 
 
 lemma discardable_not_writable_all:
@@ -862,6 +884,23 @@ shows   "\<exists>r' w' r'' w''. r = r' \<union> r''
 using assms by (auto dest:  instantiate_ctx_split
                      intro: matches_ptrs_split' [simplified])
 
+
+lemma matches_ptrs_split3:
+  assumes "K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'"
+and       " K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>3"
+and     "\<Xi>, \<sigma> \<turnstile> \<gamma> matches (instantiate_ctx \<tau>s \<Gamma>) \<langle>r, w\<rangle>"
+and     "list_all2 (kinding []) \<tau>s K"
+shows   "\<exists>r1 r2 r3 w1 w2 w3 . r = r1 \<union> r2 \<union> r3
+                       \<and> w = w1 \<union> w2 \<union> w3
+                       \<and> w1 \<inter> w2 = {}
+                       \<and> w1 \<inter> w3 = {}
+                       \<and> w2 \<inter> w3 = {}
+                       \<and> (\<Xi>, \<sigma> \<turnstile> \<gamma> matches (instantiate_ctx \<tau>s \<Gamma>1) \<langle>r1 , w1 \<rangle>)
+                       \<and> (\<Xi>, \<sigma> \<turnstile> \<gamma> matches (instantiate_ctx \<tau>s \<Gamma>2) \<langle>r2, w2\<rangle>)
+                       \<and> (\<Xi>, \<sigma> \<turnstile> \<gamma> matches (instantiate_ctx \<tau>s \<Gamma>3) \<langle>r3 , w3 \<rangle>)"
+  using assms matches_ptrs_split
+  
+  by (smt Int_Un_distrib Un_assoc Un_empty)
 
 
 
@@ -1275,7 +1314,24 @@ shows   "\<sigma> p \<noteq> None"
 using assms proof (induct arbitrary: p rule: matches_ptrs.induct)
 case matches_ptrs_some then show ?case using uval_typing_valid by blast
 qed auto
+(* 
+The statement below can be specialised (without losing generality) to say that if any pointer
+ that \<sigma> assigns and on which \<sigma>' disagrees is not in the typing statement involving \<sigma>, 
+then the typing statement can be lifted to \<sigma>'.
 
+Explanations:
+here, w2 is irrelevant
+we can always take w1 \<subset> w2 as  frame \<sigma> w1 \<sigma>' w2 implies frame \<sigma> w1 \<sigma>' (w1 \<union> w2)
+and this means that \<sigma>' assigns more, but may do anything in w1.
+But we also want to have w1 minimal in this lemma.
+In other words, we want a partition w1, w2' := w2\w1, and w3 the remaining of pointers such that w1
+is minimal. So, we want w2'\<union>w3 as big as possible
+w3 consists of pointers that are mapped to equal (option) values by \<sigma> and \<sigma>'
+w2' consists of pointers that are unassigned by \<sigma>
+
+Therefore, we can choose w1 minimal as the set of pointers that are assigned by \<sigma> but whose
+values differ from \<sigma>'
+*)
 lemma uval_typing_frame:
 assumes "frame \<sigma> w1 \<sigma>' w2"
 and     "w \<inter> w1 = {}"
@@ -1341,6 +1397,15 @@ using assms by (auto simp: frame_def
 lemma frame_noalias_uval_typing' :
 assumes "frame \<sigma> u \<sigma>' u'"
 and     "\<Xi>, \<sigma> \<turnstile> v :u \<tau> \<langle>r, w\<rangle>"
+shows   "w \<inter> u = {} \<Longrightarrow> w \<inter> u' = {}"
+and     "r \<inter> u = {} \<Longrightarrow> r \<inter> u' = {}"
+using assms by (auto simp: frame_def
+                     dest: uval_typing_valid [rotated 1]
+                     iff:  set_eq_iff)
+
+lemma frame_noalias_uval_typing_array' :
+assumes "frame \<sigma> u \<sigma>' u'"
+and     "\<Xi>, \<sigma> \<turnstile>* v :ua \<tau> \<langle>r, w\<rangle>"
 shows   "w \<inter> u = {} \<Longrightarrow> w \<inter> u' = {}"
 and     "r \<inter> u = {} \<Longrightarrow> r \<inter> u' = {}"
 using assms by (auto simp: frame_def
@@ -1510,7 +1575,8 @@ next case Cons then show ?case
                                                        elim: type_repr_uval_repr type_repr_uval_repr_deep)
   next case Suc with Cons(2-) show ?thesis
     apply (clarsimp)
-    apply (erule u_t_r_consE)
+      apply (erule u_t_r_consE)
+      thm  Cons(1) [OF _ _ assms(3)]
      apply (clarsimp, frule(2) Cons(1) [OF _ _ assms(3)])
      apply (blast intro: uval_typing_uval_typing_record_uval_typing_array.intros)
     apply (clarsimp, frule(2) Cons(1) [OF _ _ assms(3)])
@@ -1629,6 +1695,50 @@ using assms proof (cases taken)
 next case Taken  with assms show ?thesis by (fastforce intro!: uval_typing_record_put_taken)
 qed
 
+
+lemma uval_typing_array_take:
+assumes "\<Xi>, \<sigma> \<turnstile>* fs :ua \<tau> \<langle>r, w\<rangle>"
+and     "[] \<turnstile> \<tau> wellformed"
+and     "f < length fs"
+shows   "\<exists>r' w'. (\<Xi>, \<sigma> \<turnstile> (fs ! f) :u  \<tau>  \<langle>r' , w' \<rangle>)                       
+                       \<and> r' \<subseteq> r 
+                       \<and> w' \<subseteq> w                  "
+  using assms proof (induct fs arbitrary: f r w )
+  case Nil then show ?case by force
+next case Cons then show ?case
+  proof (cases f)
+    case 0   with Cons(2-) show ?thesis 
+ by (fastforce intro!: u_t_r_cons2 elim!: u_t_a_consE dest: kinding_to_wellformedD
+            elim: type_repr_uval_repr type_repr_uval_repr_deep)
+  next case Suc with Cons(2-) show ?thesis
+    apply (clarsimp)
+      apply (erule u_t_a_consE)
+      thm Cons(1) [OF _  assms(2)]
+     apply (clarsimp, frule(1) Cons(1) [OF _  assms(2)])
+     apply (blast intro: uval_typing_uval_typing_record_uval_typing_array.intros)
+  done
+  qed
+qed
+
+ 
+(*
+     case Nil  then show ?case by force
+next case Cons then show ?case
+  proof (cases f)
+       case 0   with Cons(2-) show ?thesis by ( clarsimp, elim u_t_r_consE
+                                              , auto intro!: exI
+                                                             uval_typing_uval_typing_record_uval_typing_array.intros
+                                                       elim: type_repr_uval_repr type_repr_uval_repr_deep)
+  next case Suc with Cons(2-) show ?thesis
+    apply (clarsimp)
+    apply (erule u_t_r_consE)
+     apply (clarsimp, frule(2) Cons(1) [OF _ _ assms(3)])
+     apply (blast intro: uval_typing_uval_typing_record_uval_typing_array.intros)
+    apply (clarsimp, frule(2) Cons(1) [OF _ _ assms(3)])
+    apply (fastforce intro!: uval_typing_uval_typing_record_uval_typing_array.intros)
+  done
+  qed
+qed*)
 
 
 
@@ -1904,18 +2014,78 @@ next
     by (auto elim!: subtyping.cases intro: uval_typing_uval_typing_record_uval_typing_array.intros)
 
 next
-  case (u_t_p_arr_w \<Xi> \<sigma> vs t r w l r' ptrl)
-  then show ?case sorry
+  case (u_t_p_arr_w \<Xi> \<sigma> vs \<tau> r w l r' ptrl) 
+  
+  (* Following u_t_p_rec_ro *)
+  obtain \<tau>' where elims:
+    "t' = TArray \<tau>' (length vs) (Boxed Writable ptrl)"
+    "[] \<turnstile> \<tau>  \<sqsubseteq> \<tau>' "
+    using u_t_p_arr_w
+    by (auto elim: subtyping.cases intro: uval_typing_uval_typing_record_uval_typing_array.intros)
+  obtain r' where elts: "\<Xi>, \<sigma> \<turnstile>* vs :ua \<tau>' \<langle>r', w\<rangle>"
+      "r' \<subseteq> r"
+      using elims subty_tarray subtyping_simps(6) u_t_p_arr_w by meson
+
+  show ?case
+    using u_t_p_arr_w elims elts uval_typing_uval_typing_record_uval_typing_array.u_t_p_arr_w    
+    by (metis Un_iff subtyping_preserves_type_repr sup.absorb_iff1)
 next
-  case (u_t_p_arr_ro \<Xi> \<sigma> vs t r l r' ptrl)
-  then show ?case sorry
+  case (u_t_p_arr_ro \<Xi> \<sigma> vs \<tau> r l r' ptrl)
+  
+  obtain \<tau>' where elims:
+    "t' = TArray \<tau>' (length vs) (Boxed ReadOnly ptrl)"
+    "[] \<turnstile> \<tau>  \<sqsubseteq> \<tau>' "
+    using u_t_p_arr_ro
+    by (auto elim: subtyping.cases intro: uval_typing_uval_typing_record_uval_typing_array.intros)
+  obtain r' where elts: "\<Xi>, \<sigma> \<turnstile>* vs :ua \<tau>' \<langle>r', {}\<rangle>"
+      "r' \<subseteq> r"
+      using elims subty_tarray subtyping_simps(6) u_t_p_arr_ro by meson
+  show ?case
+    using u_t_p_arr_ro elts elims uval_typing_uval_typing_record_uval_typing_array.u_t_p_arr_ro
+    by (metis insertI1 insert_subset subset_insertI2 subtyping_preserves_type_repr)
+
 
 next
   case (u_t_a_empty t \<Xi> \<sigma>)
-  then show ?case sorry
+  then show ?case    
+    by (meson subset_empty subtyping_wellformed_preservation(1) uval_typing_uval_typing_record_uval_typing_array.u_t_a_empty)
 next
   case (u_t_a_cons \<Xi> \<sigma> x t r w xs r' w' rp)
-  then show ?case sorry
+(* following case u_t_r_cons2 *)
+  have tarr_subty: "[] \<turnstile> TArray t n s \<sqsubseteq> TArray t' n s"
+    using u_t_a_cons 
+    by (auto intro: subtyping.intros)
+
+  obtain ra' where elts_reads:
+      "ra'\<subseteq>r"
+      "\<Xi>, \<sigma> \<turnstile> x :u t' \<langle>ra', w\<rangle>"
+    using u_t_a_cons  by meson
+
+  obtain rts2' where elts_rest:
+    "\<Xi>, \<sigma> \<turnstile>* xs :ua t' \<langle>rts2', w'\<rangle>"
+    "rts2' \<subseteq> r'"
+    using u_t_a_cons tarr_subty by blast
+
+  have t'_wf: "type_wellformed 0 t'"
+    using local.u_t_a_cons subtyping_wellformed_preservation(1) uval_typing_to_wellformed(1) by fastforce
+
+
+  have repr_same:
+    "type_repr t' = rp"
+    "uval_repr x = type_repr t'"
+    "uval_repr_deep x = type_repr t'"
+    using u_t_a_cons elts_rest
+    using subtyping_preserves_type_repr type_repr_uval_repr type_repr_uval_repr_deep
+    by (metis)+
+    
+  show ?case
+    apply (rule exI[where x="ra' \<union> rts2'"])
+    apply rule
+    using elts_rest elts_reads apply blast    
+    using elts_rest elts_reads u_t_a_cons repr_same 
+    by (meson equalityD1 subset_helper uval_typing_uval_typing_record_uval_typing_array.u_t_a_cons)  
+    
+  
 qed (auto elim: subtyping.cases intro: uval_typing_uval_typing_record_uval_typing_array.intros)
 
 
@@ -1941,38 +2111,180 @@ lemma u_t_p_rec_w':
   using assms
   by (auto intro: u_t_p_rec_w)
 
+lemma u_sem_map2_lengthes :
+  assumes "\<xi> , vs1, vs2, \<gamma> \<turnstile>m2 (\<sigma>, f) \<Down>! (\<sigma>', vs1', vs2')"
+  shows "length vs1 = length vs1'"
+        "length vs2 = length vs2'"
+        "length vs1 = length vs1'"
+  sorry
+
+
+
+definition triplet :: _
+  where "triplet P \<sigma> r w u \<equiv> 
+ (P \<sigma> r w ) \<and> (r \<inter> u = {}) \<and> (w \<inter> u = {})"
+
+lemma triplet_frame :
+  assumes "frame \<sigma> u \<sigma>' u'"
+  shows 
+        "triplet (\<lambda> \<sigma>. uval_typing \<Xi> \<sigma> v \<tau>) \<sigma> r w u 
+     \<Longrightarrow> triplet (\<lambda> \<sigma>. uval_typing \<Xi> \<sigma> v \<tau>) \<sigma>' r w u'"
+   and  "triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs \<tau>) \<sigma> r w u 
+     \<Longrightarrow> triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs \<tau>) \<sigma>' r w u'"
+   and  "triplet (\<lambda> \<sigma>. matches_ptrs \<Xi> \<sigma> \<gamma> \<Gamma>) \<sigma> r w u 
+     \<Longrightarrow> triplet (\<lambda> \<sigma>. matches_ptrs \<Xi> \<sigma> \<gamma> \<Gamma>) \<sigma>' r w u'"
+
+  
+  
+    apply(atomize(full))
+using assms
+  apply( intro conjI; intro impI; simp add:triplet_def; elim conjE; intro conjI; simp)
+  
+        apply(drule(4) uval_typing_frame)
+       apply(drule(3) frame_noalias_uval_typing')
+      apply(drule(3) frame_noalias_uval_typing')
+     apply(drule(4) uval_typing_frame)
+    apply(drule(3) frame_noalias_uval_typing_array')
+   apply(drule(3) frame_noalias_uval_typing_array')
+  using          frame_noalias_matches_ptrs
+                 uval_typing_frame  matches_ptrs_frame assms
+  apply fast+
+  
+  done
+
+lemma triplet_union :
+   "triplet P \<sigma> r w (u1 \<union> u2) = (triplet P \<sigma> r w u1 \<and> triplet P \<sigma> r w u2)"
+  apply (simp add:triplet_def )
+  by blast
+
+definition ortho :: _
+  where "ortho \<sigma> w u \<equiv> 
+              ((\<forall> p. p \<in> u \<longrightarrow> \<sigma> p \<noteq> None) \<and> (u \<inter> w = {}))"
+
+lemma ortho_union :
+  assumes "ortho \<sigma> w u"
+    and "ortho \<sigma> w u'"
+  shows "ortho \<sigma> w (u \<union> u')"
+  using assms
+  apply (simp only:ortho_def)
+  by blast
+
+lemma frame_ortho :
+  assumes "frame \<sigma> w \<sigma>' w'"
+      and "ortho \<sigma> w u"      
+    shows "ortho \<sigma>' w' u" 
+proof -
+
+  from assms[simplified frame_def ortho_def]
+  show ?thesis
+    apply (simp add:ortho_def)
+    by fastforce+
+qed
+
+
+ML \<open> 
+(* by looking at rotate_rule *)
+fun get_assms ctxt st =
+  let 
+    val p = Thm.prop_of st
+    val p =
+       if Term.strip_all_vars p = [] then          
+             (case Logic.strip_imp_prems p of
+                 [] => p
+               | p :: _ => p )
+       else
+          p
+ 
+    val rest = Term.strip_all_body p; 
+    val vars = Term.strip_all_vars p;
+    val vars' = List.map Free vars |> List.rev        
+       
+    val asms = Logic.strip_imp_prems rest 
+      |> List.map (fn x => Term.subst_bounds (vars', x))
+      |> List.map (Thm.cterm_of ctxt);
+  in
+  (asms, List.map fst vars)
+end
+
+fun make_obtain ctxt st =
+   let
+     val (hyps, vars) = get_assms ctxt st
+   in
+  "obtain " ^ String.concatWith " " vars 
+  ^ " where \n  "
+ ^ String.concatWith "\n  " (List.map @{make_string} hyps)
+end
+
+fun print f = 
+  PRIMITIVE (fn t =>
+   tap (fn t => tracing ( (f t))) t) 
+
+\<close>
+(*
+
+
+    apply(erule exE)
+    apply(erule conjE)+
+    apply(rename_tac r_a w_a)
+apply(tactic \<open>print ( make_obtain @{context})\<close>)
+
+*)
+
 
 theorem preservation:
 assumes "list_all2 (kinding []) \<tau>s K"
-and     "proc_ctx_wellformed \<Xi>"
+and     "proc_ctx_wellformed \<Xi>" 
+(* not useful in the third goal of map2 *)
 and     "\<Xi>, \<sigma> \<turnstile> \<gamma> matches (instantiate_ctx \<tau>s \<Gamma>) \<langle>r, w\<rangle>"
 and     "\<xi> matches-u \<Xi>"
 shows   "\<lbrakk> \<xi>, \<gamma> \<turnstile>  (\<sigma>, specialise \<tau>s e) \<Down>! (\<sigma>', v)
          ; \<Xi>, K, \<Gamma> \<turnstile> e : \<tau>
          \<rbrakk> \<Longrightarrow> \<exists>r' w'. (\<Xi> , \<sigma>' \<turnstile> v :u instantiate \<tau>s \<tau> \<langle>r', w'\<rangle>)
                      \<and> r' \<subseteq> r
-                     \<and> frame \<sigma> w \<sigma>' w'"
+                     \<and> frame \<sigma> w \<sigma>' w'
+              \<comment>  \<open>    \<and> ((K  \<turnstile>* \<Gamma> :\<kappa>c {S, D}) \<longrightarrow> w' = {})\<close>
+"
 and     "\<lbrakk> \<xi>, \<gamma> \<turnstile>* (\<sigma>, map (specialise \<tau>s) es) \<Down>! (\<sigma>', vs)
          ; \<Xi>, K, \<Gamma> \<turnstile>* es : \<tau>s'
          \<rbrakk> \<Longrightarrow> \<exists>r' w'. (\<Xi>, \<sigma>' \<turnstile>* vs :u map (instantiate \<tau>s) \<tau>s' \<langle>r', w'\<rangle>)
                      \<and> r' \<subseteq> r
                      \<and> frame \<sigma> w \<sigma>' w'"
-and     "\<lbrakk> \<xi>, (vs1, vs2, \<gamma>) \<turnstile>m2 (\<sigma>, (specialise \<tau>s) e) \<Down>! (\<sigma>', vs1', vs2')
-         ; \<Xi>, K, \<Gamma> \<turnstile> e : \<tau>'
-         \<rbrakk> \<Longrightarrow> \<exists>r' w'. (\<Xi>, \<sigma>' \<turnstile>* vs :ua (instantiate \<tau>s) \<tau>' \<langle>r', w'\<rangle>)
-                     \<and> r' \<subseteq> r
-                     \<and> frame \<sigma> w \<sigma>' w'"
+and     "\<lbrakk> \<xi>, vs1, vs2, \<gamma> \<turnstile>m2 (\<sigma>, (specialise \<tau>s) e) \<Down>! (\<sigma>', vs1', vs2')
+         ; \<Xi>, K, Some \<tau>1 # Some \<tau>2 # \<Gamma> \<turnstile> e : TProduct \<tau>1 \<tau>2
+         ; w = {}   \<comment> \<open> K  \<turnstile>* \<Gamma> :\<kappa>c {S, D}\<close>  
+
+;  \<Xi>, \<sigma> \<turnstile>* vs1 :ua instantiate \<tau>s \<tau>1 \<langle>r_a1, w_a1\<rangle>
+   ;  \<Xi>, \<sigma> \<turnstile>* vs2 :ua instantiate \<tau>s \<tau>2 \<langle>r_a2, w_a2\<rangle>
+\<comment> \<open> below necessary to prove the induction step \<close>
+; r \<inter> w_a1 = {}         
+; r \<inter> w_a2 = {}
+; w_a1 \<inter> w_a2 = {}
+; r_a1 \<inter> w_a2 = {}
+; r_a2 \<inter> w_a1 = {}   
+         \<rbrakk> \<Longrightarrow> 
+
+
+\<exists>\<rho>1 m1 \<rho>2 m2. (\<Xi>, \<sigma>' \<turnstile>* vs1' :ua (instantiate \<tau>s) \<tau>1 \<langle>\<rho>1, m1\<rangle>)
+                    \<and> (\<Xi>, \<sigma>' \<turnstile>* vs2' :ua (instantiate \<tau>s) \<tau>2 \<langle>\<rho>2, m2\<rangle>)
+                   \<and> \<rho>1 \<inter> m2 = {}
+                   \<and> \<rho>2 \<inter> m1 = {}
+                   \<and> m1 \<inter> m2 = {}
+                     \<and> \<rho>1 \<union> \<rho>2 \<subseteq> r_a1 \<union> r_a2 \<union> r
+                     \<and> frame \<sigma> (w_a1 \<union> w_a2) \<sigma>' (m1 \<union> m2)"
 
   using assms
 proof (induct "(\<sigma>, specialise \<tau>s e)" "(\<sigma>', v )"
                       and "(\<sigma>, map (specialise \<tau>s) es)" "(\<sigma>', vs)"
+                      and "(\<sigma>, specialise \<tau>s e)" "(\<sigma>', vs1', vs2')"
                       arbitrary:  e  \<tau>s K \<tau>   \<Gamma> r w v  \<sigma>' \<sigma>
                              and  es \<tau>s K \<tau>s' \<Gamma> r w vs \<sigma>' \<sigma>
+                             and  e  \<tau>s K \<tau>1 \<tau>2 \<Gamma> r w vs1' vs2' \<sigma>' \<sigma>
+                                  r_a1 r_a2 w_a1 w_a2
                       rule: u_sem_u_sem_all_u_sem_map2.inducts)
-     case u_sem_var       then show ?case by ( cases e, simp_all
-                                             , fastforce elim!:  typing_varE
+  case u_sem_var       then show ?case 
+    by(  cases e, simp_all, fastforce elim!:  typing_varE
                                                          dest!:  matches_ptrs_proj
-                                                         intro:  frame_id)
+                                                         intro:  frame_id) 
 next case u_sem_prim      then show ?case by ( cases e, simp_all
                                              , auto      elim!:  typing_primE
                                                          dest!:  u_sem_prim(2)
@@ -2558,9 +2870,10 @@ next
       "w1pa' \<inter> w2 = {}"
       "w1pa' \<inter> r1 = {}"
       "w1pa' \<inter> r2 = {}"
+      thm IH1_lemmas
       using frame_noalias_matches_ptrs[OF IH1_lemmas(3)] ptrs_split_lemmas[simplified Int_Un_distrib Int_Un_distrib2 Un_empty]
       by meson+
-
+    find_theorems r1'
     have inst_t_wellformed: "[] \<turnstile> instantiate \<tau>s t wellformed"
       using substitutivity(1) typing_e_elim_lemmas u_sem_take.prems kinding_to_wellformedD
       by blast
@@ -2916,9 +3229,15 @@ next
     ultimately show ?thesis
       by (meson order.trans value_subtyping)
   qed force+
-next case u_sem_all_empty then show ?case
-    by ( cases es, simp_all, fastforce intro!: frame_id
-                                               uval_typing_all.intros
+next case u_sem_all_empty 
+  obtain n where "\<Gamma> = Cogent.empty n" 
+    using u_sem_all_empty
+    by ( cases es, simp_all, fastforce )
+  
+    show ?case
+      using u_sem_all_empty
+    by ( cases es, simp_all, fastforce intro!: frame_id[of _ "{}"]
+                                               u_t_all_empty
                                        dest: matches_ptrs_empty_env(2))
 next case u_sem_all_cons
   note IH1  = this(2)
@@ -2938,25 +3257,996 @@ next case u_sem_all_cons
     apply (blast intro!: uval_typing_all.intros)
   done
 next
-  case (u_sem_map2_empty \<xi> \<gamma> \<sigma> f)
-  then show ?case sorry
+  case (u_sem_map2_empty _ _ \<sigma>)
+  from `\<Xi>, \<sigma> \<turnstile>* [] :ua instantiate \<tau>s \<tau>1 \<langle>r_a1, w_a1\<rangle>`
+  have h1 : "r_a1 = {}" 
+       "w_a1 = {}"
+       "[] \<turnstile> instantiate \<tau>s \<tau>1 wellformed"
+    by (atomize(full), rule, simp )
+  from `\<Xi>, \<sigma> \<turnstile>* [] :ua instantiate \<tau>s \<tau>2 \<langle>r_a2, w_a2\<rangle>`
+  have h2 : "r_a2 = {}" 
+       "w_a2 = {}"
+       "[] \<turnstile> instantiate \<tau>s \<tau>2 wellformed"
+    by (atomize(full), rule, simp )
+    
+
+
+
+          
+    
+    
+  show ?case
+    
+    apply(rule exI[of _ "{}"])+
+    apply (simp add:h1 h2)
+    using h1 h2    
+    by (simp add: frame_id u_t_a_empty)
 next
-  case (u_sem_map2_cons \<xi> vs1 vs2 \<gamma> \<sigma> f \<sigma>' vs1' vs2' v1 v2 \<sigma>'' v1' v2')
-  then show ?case sorry
+  case (u_sem_map2_cons \<xi> vs1 vs2 \<gamma> \<sigma> \<sigma>' vs1' vs2'  v1 v2 \<sigma>'' v1' v2' e)
+  note w0 = `w = {}`
+    
+  from `\<Xi>, \<sigma> \<turnstile>* v1 # vs1 :ua instantiate \<tau>s \<tau>1 \<langle>r_a1, w_a1\<rangle>`
+  obtain r_v1 w_v1 r_vs1 w_vs1 where 
+    typ1 : 
+    "r_a1 = r_v1 \<union> r_vs1"
+    "w_a1 = w_v1 \<union> w_vs1"
+    "\<Xi>, \<sigma> \<turnstile> v1 :u instantiate \<tau>s \<tau>1 \<langle>r_v1, w_v1\<rangle>"
+    "\<Xi>, \<sigma> \<turnstile>* vs1 :ua instantiate \<tau>s \<tau>1 \<langle>r_vs1, w_vs1\<rangle> "
+    " w_v1 \<inter> w_vs1 = {} "
+    " w_v1 \<inter> r_vs1 = {} " 
+    " w_vs1 \<inter> r_v1 = {} " 
+    ..
+
+
+  from `\<Xi>, \<sigma> \<turnstile>* v2 # vs2 :ua instantiate \<tau>s \<tau>2 \<langle>r_a2, w_a2\<rangle>`
+  obtain r_v2 w_v2 r_vs2 w_vs2 where 
+    typ2 : 
+    "r_a2 = r_v2 \<union> r_vs2"
+    "w_a2 = w_v2 \<union> w_vs2"
+    "\<Xi>, \<sigma> \<turnstile> v2 :u instantiate \<tau>s \<tau>2 \<langle>r_v2, w_v2\<rangle>"
+    "\<Xi>, \<sigma> \<turnstile>* vs2 :ua instantiate \<tau>s \<tau>2 \<langle>r_vs2, w_vs2\<rangle> "
+    " w_v2 \<inter> w_vs2 = {} "
+    " w_v2 \<inter> r_vs2 = {} " 
+    " w_vs2 \<inter> r_v2 = {} " 
+    ..
+
+
+  (* Induction hypothesis on vs1 *)
+  from u_sem_map2_cons(2)
+  obtain \<rho>1 m1 \<rho>2 m2 where IH_vs1 :
+     "\<Xi>, \<sigma>' \<turnstile>* vs1' :ua instantiate \<tau>s \<tau>1 \<langle>\<rho>1, m1\<rangle> "
+     "\<Xi>, \<sigma>' \<turnstile>* vs2' :ua instantiate \<tau>s \<tau>2 \<langle>\<rho>2, m2\<rangle> "
+     "\<rho>1 \<inter> m2 = {} "
+     "\<rho>2 \<inter> m1 = {} " 
+     "m1 \<inter> m2 = {} " 
+     "\<rho>1 \<union> \<rho>2 \<subseteq> r_vs1 \<union> r_vs2 \<union> r "
+     " frame \<sigma> (w_vs1 \<union> w_vs2) \<sigma>' (m1 \<union> m2)"
+    apply (atomize(full), rule)
+                  prefer 15
+                  apply blast
+                 prefer 13
+                 apply    (fastforce intro:u_sem_map2_cons typ1 typ2)+
+    using u_sem_map2_cons typ1 typ2 by auto
+
+
+
+  have "\<Xi>, \<sigma> \<turnstile> v1 # v2 # \<gamma> matches instantiate_ctx \<tau>s (Some \<tau>1 # Some \<tau>2 # \<Gamma>) 
+              \<langle>r_v1 \<union> (r_v2 \<union> r), w_v1 \<union> (w_v2 \<union> w)\<rangle>"    
+    apply simp
+    apply rule    
+        apply (simp add: typ1)
+       apply rule  
+    using w0 typ1 typ2 u_sem_map2_cons
+    by auto
+  then have v12\<gamma>_ptr : " \<Xi>, \<sigma>' \<turnstile> v1 # v2 # \<gamma> matches instantiate_ctx \<tau>s (Some \<tau>1 # Some \<tau>2 # \<Gamma>) 
+              \<langle>r_v1 \<union> (r_v2 \<union> r), w_v1 \<union> (w_v2 \<union> w)\<rangle>" 
+    apply(-)
+    apply(drule matches_ptrs_frame)
+    using IH_vs1 apply blast
+    using w0 typ1 typ2 u_sem_map2_cons
+    by auto
+    
+   (* induction hypothesis for e *) 
+    from u_sem_map2_cons(4)
+    obtain r_e w_e where
+      IH_e :
+     " \<Xi>, \<sigma>'' \<turnstile> UProduct v1' v2' :u instantiate \<tau>s (TProduct \<tau>1 \<tau>2) \<langle>r_e, w_e\<rangle>" 
+    " r_e \<subseteq> r_v1 \<union> (r_v2 \<union> r)" 
+    " frame \<sigma>' (w_v1 \<union> (w_v2 \<union> w)) \<sigma>'' w_e"
+apply (atomize(full), rule)
+            prefer 7
+                  apply blast        
+      by    (fastforce intro:u_sem_map2_cons typ1 typ2 v12\<gamma>_ptr)+
+
+
+    let ?triplet_v2 = "triplet (\<lambda> \<sigma>. uval_typing \<Xi> \<sigma> v2 (instantiate \<tau>s \<tau>2))"
+
+    have "?triplet_v2 \<sigma> r_v2 w_v2 w_vs1"
+      apply(simp add:triplet_def)            
+      using typ1 typ2 u_sem_map2_cons  by blast
+    moreover have "?triplet_v2 \<sigma> r_v2 w_v2 w_vs2"
+      apply(simp add:triplet_def)            
+      using typ2 by blast
+    ultimately have "?triplet_v2 \<sigma> r_v2 w_v2 (w_vs1 \<union> w_vs2)"
+      by (simp add:triplet_union) 
+    then have "?triplet_v2 \<sigma>' r_v2 w_v2 (m1 \<union> m2)"
+      apply (rule triplet_frame[rotated 1])
+      by (simp add:IH_vs1)
+    then have v2_m12 : "?triplet_v2 \<sigma>' r_v2 w_v2 m1"
+              "?triplet_v2 \<sigma>' r_v2 w_v2 m2"
+      by(atomize(full), simp add:triplet_union)
+      
+    let ?triplet_v1 = "triplet (\<lambda> \<sigma>. uval_typing \<Xi> \<sigma> v1 (instantiate \<tau>s \<tau>1))"
+    find_theorems v1
+    have "?triplet_v1 \<sigma> r_v1 w_v1 w_vs1"
+      apply(simp add:triplet_def)            
+      using typ1   by blast
+    moreover have "?triplet_v1 \<sigma> r_v1 w_v1 w_vs2"
+      apply(simp add:triplet_def)            
+      using typ1 typ2 u_sem_map2_cons by blast
+    ultimately have "?triplet_v1 \<sigma> r_v1 w_v1 (w_vs1 \<union> w_vs2)"
+      by (simp add:triplet_union) 
+    then have "?triplet_v1 \<sigma>' r_v1 w_v1 (m1 \<union> m2)"
+      apply (rule triplet_frame[rotated 1])
+      by (simp add:IH_vs1)
+    then have v1_m12 : "?triplet_v1 \<sigma>' r_v1 w_v1 m1"
+              "?triplet_v1 \<sigma>' r_v1 w_v1 m2"
+      by(atomize(full), simp add:triplet_union)
+      
+    note v12_m12 = v1_m12 v2_m12
+      
+
+    from ` \<Xi>, \<sigma>'' \<turnstile> UProduct v1' v2' :u instantiate \<tau>s (TProduct \<tau>1 \<tau>2) \<langle>r_e, w_e\<rangle>`[simplified]
+    obtain r_v1' w_v1' r_v2' w_v2' where
+      typv12' :
+       "r_e = r_v1' \<union> r_v2' "
+       "w_e = w_v1' \<union> w_v2' "
+       "\<Xi>, \<sigma>'' \<turnstile> v1' :u instantiate \<tau>s \<tau>1 \<langle>r_v1', w_v1'\<rangle> "
+       "\<Xi>, \<sigma>'' \<turnstile> v2' :u instantiate \<tau>s \<tau>2 \<langle>r_v2', w_v2'\<rangle> "
+       " w_v1' \<inter> w_v2' = {}"
+       " w_v1' \<inter> r_v2' = {}" 
+       " w_v2' \<inter> r_v1' = {}" ..    
+
+    have "(r_a1 \<union> r_a2) \<inter> (w_a1 \<union> w_a2) = {}"
+      using 
+            `r_a1 \<inter> w_a2 = {}`
+            `r_a2 \<inter> w_a1 = {}`
+           
+            (* both imply that they are disjoints *)
+            `\<Xi>, \<sigma> \<turnstile>* v1 # vs1 :ua instantiate \<tau>s \<tau>1 \<langle>r_a1, w_a1\<rangle>`
+            `\<Xi>, \<sigma> \<turnstile>* v2 # vs2 :ua instantiate \<tau>s \<tau>2 \<langle>r_a2, w_a2\<rangle>`
+      apply -
+      apply(drule uval_typing_pointers_noalias)+
+      by blast
+    then have "(r_vs1 \<union> r_vs2) \<inter> (w_a1 \<union> w_a2) = {}"
+      using            
+            `r_a1 = r_v1 \<union> r_vs1`
+            `r_a2 = r_v2 \<union> r_vs2`
+      by blast
+   
+    then have \<rho>12_w_a12 : "(\<rho>1 \<union> \<rho>2) \<inter> (w_a1 \<union> w_a2) = {}"
+      using `\<rho>1 \<union> \<rho>2 \<subseteq> r_vs1 \<union> r_vs2 \<union> r`
+            `r \<inter> w_a1 = {}`
+            `r \<inter> w_a2 = {}`
+      by blast
+      
+        
+    
+
+    let ?triplet_vs1' = "triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs1' (instantiate \<tau>s \<tau>1))"
+    have vs1'_\<sigma>' : "?triplet_vs1' \<sigma>' \<rho>1 m1 (w_v1 \<union> w_v2)"
+      apply (simp add:triplet_def)
+      find_theorems vs1' 
+      apply (intro conjI)+
+        apply(rule IH_vs1)
+      using \<rho>12_w_a12 
+            `w_a1 = w_v1 \<union> w_vs1`
+            `w_a2 = w_v2 \<union> w_vs2`
+       apply blast
+      using v12_m12[simplified triplet_def]
+      apply blast
+      done
+
+    
+    then have vs1'_\<sigma>'' : "?triplet_vs1' \<sigma>'' \<rho>1 m1 w_e"
+      apply (rule triplet_frame[rotated 1])         
+      using IH_e[simplified w0 , simplified]
+      apply -
+      apply assumption
+      done
+
+
+ let ?triplet_vs2' = "triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs2' (instantiate \<tau>s \<tau>2))"
+    have vs2'_\<sigma>' : "?triplet_vs2' \<sigma>' \<rho>2 m2 (w_v1 \<union> w_v2)"
+      apply (simp add:triplet_def)
+      find_theorems vs1' 
+      apply (intro conjI)+
+        apply(rule IH_vs1)
+      using \<rho>12_w_a12 
+            `w_a1 = w_v1 \<union> w_vs1`
+            `w_a2 = w_v2 \<union> w_vs2`
+       apply blast
+      using v12_m12[simplified triplet_def]
+      apply blast
+      done
+
+    
+    then have vs2'_\<sigma>'' : "?triplet_vs2' \<sigma>'' \<rho>2 m2 w_e"
+      apply (rule triplet_frame[rotated 1])         
+      using IH_e[simplified w0]
+      apply simp
+      done
+      
+
+    let ?triplet_\<gamma> = "triplet (\<lambda> \<sigma>. matches_ptrs \<Xi> \<sigma> \<gamma> (instantiate_ctx \<tau>s \<Gamma>))"
+    have "?triplet_\<gamma> \<sigma> r w (w_vs1 \<union> w_vs2)"
+      using u_sem_map2_cons typ1 typ2 w0
+      apply (simp add:triplet_def)
+      by auto
+
+    then have \<gamma>_m12 : "?triplet_\<gamma> \<sigma>' r w (m1 \<union> m2)"
+     apply (rule triplet_frame[rotated 1])         
+      by(rule IH_vs1)
+      
+    have m12_r_e : "(m1 \<union> m2) \<inter> r_e = {}"
+     using v12_m12  \<gamma>_m12            
+            `r_e \<subseteq> r_v1 \<union> (r_v2 \<union> r)`
+     apply ( simp add:triplet_def)     
+     by auto
+
+ 
+    show ?case  
+      apply(rule exI)+
+      apply (intro conjI)
+            apply (rule)      
+
+      using typv12' apply simp
+      using vs1'_\<sigma>''[simplified triplet_def] apply blast
+      using typv12' vs1'_\<sigma>''[simplified triplet_def] apply blast
+      using typv12' vs1'_\<sigma>''[simplified triplet_def] apply blast
+      using m12_r_e `r_e = r_v1' \<union> r_v2'` apply blast
+            apply simp
+           apply rule
+      using typv12' apply simp
+      using vs2'_\<sigma>''[simplified triplet_def] apply blast
+      using typv12' vs2'_\<sigma>''[simplified triplet_def] apply blast
+      using typv12' vs2'_\<sigma>''[simplified triplet_def] apply blast
+      using m12_r_e `r_e = r_v1' \<union> r_v2'` apply blast
+           apply simp
+      
+      using m12_r_e 
+          typv12' IH_vs1
+         vs1'_\<sigma>''[simplified triplet_def]      
+         
+          apply auto[1]
+      
+      using m12_r_e 
+          typv12' IH_vs1
+         vs2'_\<sigma>''[simplified triplet_def]      
+         apply auto[1]
+
+    
+      using typv12' IH_vs1
+          vs1'_\<sigma>''[simplified triplet_def]
+          vs2'_\<sigma>''[simplified triplet_def]  
+        apply auto[1]
+      
+      
+      using `r_e = r_v1' \<union> r_v2'`
+            `r_e \<subseteq> r_v1 \<union> (r_v2 \<union> r)`
+            `r_a1 = r_v1 \<union> r_vs1`
+            `r_a2 = r_v2 \<union> r_vs2`
+            `\<rho>1 \<union> \<rho>2 \<subseteq> r_vs1 \<union> r_vs2 \<union> r`
+       apply blast
+
+      using 
+            frame_app[ OF `frame \<sigma> (w_vs1 \<union> w_vs2) \<sigma>' (m1 \<union> m2)`
+                          `frame \<sigma>' (w_v1 \<union> (w_v2 \<union> w)) \<sigma>'' w_e`]
+      apply(simp add:             `w_e = w_v1' \<union> w_v2'`
+             `w_a1 = w_v1 \<union> w_vs1`
+             `w_a2 = w_v2 \<union> w_vs2`
+             w0)
+
+      
+
+      
+      apply (simp add: Un_left_commute inf_sup_aci(5))
+      done
+
+
 next
-  case (u_sem_array_index \<xi> \<gamma> \<sigma> a \<sigma>' vs r i \<sigma>'' i')
-  then show ?case sorry
+  case (u_sem_array_index \<xi> \<gamma> \<sigma> a \<sigma>' vs ra i \<sigma>'' j _ _ _ _ _ )
+
+  from `ArrayIndex a i = specialise \<tau>s e`
+  obtain a' i' where e_def :
+     "a = specialise \<tau>s a'"
+     "i = specialise \<tau>s i'"
+     "e = ArrayIndex a' i'"
+    
+    by(case_tac e; simp)
+  find_theorems matches_ptrs split
+  from `\<Xi>, K, \<Gamma> \<turnstile> e : \<tau>`[simplified `e = ArrayIndex a' i'`]
+  obtain \<Gamma>1 \<Gamma>2 l s k where typings :
+       "K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>2"
+       "\<Xi>, K, \<Gamma>1 \<turnstile> a' : TArray \<tau> l s"
+       "K \<turnstile> TArray \<tau> l s :\<kappa> k"
+       "D \<in> k"
+       " \<Xi>, K, \<Gamma>2 \<turnstile> i' : TPrim (Num U32)"
+    ..
+  
+  
+  from `\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma> \<langle>r, w\<rangle>`
+       `K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>2`
+  obtain r1 w1 r2 w2 where \<Gamma>12 :
+       "r = r1 \<union> r2 "
+       "w = w1 \<union> w2 "
+       "w1 \<inter> w2 = {} "
+       "\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>1 \<langle>r1, w1\<rangle> "
+       "\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>2 \<langle>r2, w2\<rangle>"
+    apply -
+    apply (drule(1) matches_ptrs_split)
+     apply(rule `list_all2 (kinding []) \<tau>s K`)
+    by blast
+    
+  (* induction hypothesis on a *)
+  from u_sem_array_index(2)
+  obtain r_a w_a where IH_a :
+  "\<Xi>, \<sigma>' \<turnstile> UArray vs ra :u TArray (instantiate \<tau>s \<tau>) l s \<langle>w_a, r_a\<rangle>"
+  "r_a \<subseteq> r1"
+  "frame \<sigma> w1 \<sigma>' w_a"
+    apply(rule)
+    using e_def apply blast
+    using typings apply blast
+        apply(rule `list_all2 (kinding []) \<tau>s K`)
+       apply(rule `proc_ctx_wellformed \<Xi>`)
+      apply(rule `\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>1 \<langle>r1, w1\<rangle> `)
+     apply(rule `\<xi> matches-u \<Xi>`) 
+    by blast
+ 
+ (* from `\<Xi>, \<sigma>' \<turnstile> UArray vs ra :u TArray (instantiate \<tau>s \<tau>) l s \<langle>w_a, r_a\<rangle>`
+  have "False"
+  proof  *)
+(* Oh yes, no unboxed *)
+  
+
+        
+    
+   
+   
+  
+  then show ?case 
+    apply (intro exI)+
+    apply (intro conjI)+
+    
+    find_theorems uval_typing nth
+    apply (rule uval_typing_uval_typing_record_uval_typing_array.uval_array_index)
+    find_theorems vs
+    sorry 
 next
-  case (u_sem_array_index_b \<xi> \<gamma> \<sigma> e \<sigma>' p r vs r' i \<sigma>'' i' a)
-  then show ?case sorry
+  case (u_sem_array_index_b \<xi> \<gamma> \<sigma> a \<sigma>' p ra vs rep' i \<sigma>'' j )
+from `ArrayIndex a i = specialise \<tau>s e`
+  obtain a' i' where e_def :
+     "a = specialise \<tau>s a'"
+     "i = specialise \<tau>s i'"
+     "e = ArrayIndex a' i'"
+    
+    by(case_tac e; simp)
+
+  from `\<Xi>, K, \<Gamma> \<turnstile> e : \<tau>`[simplified `e = ArrayIndex a' i'`]
+  obtain \<Gamma>1 \<Gamma>2 l s k where typings :
+       "K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>2"
+       "\<Xi>, K, \<Gamma>1 \<turnstile> a' : TArray \<tau> l s"
+       "K \<turnstile> TArray \<tau> l s :\<kappa> k"
+       "D \<in> k"
+       " \<Xi>, K, \<Gamma>2 \<turnstile> i' : TPrim (Num U32)"
+    ..
+
+from `\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma> \<langle>r, w\<rangle>`
+       `K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>2`
+  obtain r1 w1 r2 w2 where \<Gamma>12 :
+       "r = r1 \<union> r2 "
+       "w = w1 \<union> w2 "
+       "w1 \<inter> w2 = {} "
+       "\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>1 \<langle>r1, w1\<rangle> "
+       "\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>2 \<langle>r2, w2\<rangle>"
+    apply -
+    apply (drule(1) matches_ptrs_split)
+     apply(rule `list_all2 (kinding []) \<tau>s K`)
+    by blast
+
+  (* induction hypothesis on a *)
+  from u_sem_array_index_b(2)
+  obtain r_ap w_a where IH_a :
+  "\<Xi>, \<sigma>' \<turnstile> UPtr p ra :u instantiate \<tau>s (TArray \<tau> l s) \<langle>r_ap, w_a\<rangle>"
+  "r_ap \<subseteq> r1"
+  "frame \<sigma> w1 \<sigma>' w_a"
+    apply(rule)
+    using e_def apply blast
+    using typings apply blast
+        apply(rule `list_all2 (kinding []) \<tau>s K`)
+       apply(rule `proc_ctx_wellformed \<Xi>`)
+      apply(rule `\<Xi>, \<sigma> \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>1 \<langle>r1, w1\<rangle> `)
+     apply(rule `\<xi> matches-u \<Xi>`)
+    by blast
+
+ 
+  from `K \<turnstile> TArray \<tau> l s :\<kappa> k`
+       `D \<in> k`
+  have notwritable : "\<And> ptrl. s \<noteq>  Boxed Writable ptrl"
+    
+    apply(simp add:kinding_simps)
+    by fastforce
+  find_theorems \<sigma>' p
+  from `\<Xi>, \<sigma>' \<turnstile> UPtr p ra :u instantiate \<tau>s (TArray \<tau> l s) \<langle>r_ap, w_a\<rangle>`
+obtain  r_a  ptrl where 
+  "r_ap = insert p r_a"
+  "w_a = {}"
+  "\<Xi>, \<sigma>' \<turnstile>* vs :ua instantiate \<tau>s \<tau> \<langle>r_a, {}\<rangle>"
+(*  "\<sigma>' p = Some (UArray vs rep')" *)
+  "\<Xi>, \<sigma>' \<turnstile> UPtr p
+             (RArray (type_repr (instantiate \<tau>s \<tau>))
+               (length
+                 vs)) :u TArray (instantiate \<tau>s \<tau>) (length vs)
+                          (Boxed ReadOnly ptrl) \<langle>insert p r_a, {}\<rangle>"
+  "ra = RArray (type_repr (instantiate \<tau>s \<tau>)) (length vs)"
+  "l = length vs"
+  "s = Boxed ReadOnly ptrl"
+    
+  apply(rule;simp add:notwritable )
+  apply(clarsimp )
+  using `\<sigma>' p = Some (UArray vs rep')`
+  by fastforce
+     
+    
+   
+
+   show ?case
+    apply (intro exI)+
+     apply (intro conjI)+
+     find_theorems vs
+    apply sorry
 next
-  case (u_sem_array_map2 \<xi> \<gamma> \<sigma>0 a1 \<sigma>1 p1 r1 vs1 r1' a2 \<sigma>2 p2 r2 vs2 r2' f \<sigma>3 vs1' vs2')
-  then show ?case sorry
+  case (u_sem_array_map2 \<xi> \<gamma> \<sigma>1 a1 \<sigma>2 p1 rep1 vs1 rep1' a2 \<sigma>f p2 rep2 vs2 rep2' f \<sigma>\<sigma> vs1' vs2' 
+            )
+
+
+
+  from `ArrayMap2 f a1 a2 = specialise \<tau>s e`  
+  obtain a1' a2' f' where spec_eq :
+     "e = ArrayMap2 f' a1' a2'"
+     "a1 = specialise \<tau>s a1'"
+     "a2 = specialise \<tau>s a2'"
+     "f = specialise \<tau>s f'"     
+    by(case_tac e; clarsimp)
+
+  from `\<Xi>, K, \<Gamma> \<turnstile> e : \<tau>`[simplified spec_eq]
+   obtain \<Gamma>1 \<Gamma>' \<Gamma>2 \<Gamma>f t1 t2 s1 s2 l1 l2 where spec_typing :
+   " K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'"
+   " K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>f"
+   " \<Xi>, K, \<Gamma>1 \<turnstile> a1' : TArray t1 l1 s1"
+   " \<Xi>, K, \<Gamma>2 \<turnstile> a2' : TArray t2 l2 s2"
+   " sigil_perm s1 \<noteq> Some ReadOnly     "                  
+   " sigil_perm s2 \<noteq> Some ReadOnly"                    
+   " \<Xi>, K, Some t1 # Some t2 # \<Gamma>f \<turnstile> f' : TProduct t1 t2 "    
+   " K \<turnstile>* \<Gamma>f :\<kappa>c {S, D} "
+   "\<tau> = TProduct (TArray t1 l1 s1) (TArray t2 l2 s2)"   
+     ..
+
+    
+     
+
+
+  from `\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma> \<langle>r, w\<rangle>`
+       `K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'`
+       `K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>f`
+   obtain r_\<Gamma>1 r_\<Gamma>2 r_\<Gamma>f w_\<Gamma>1 w_\<Gamma>2 w_\<Gamma>f where pointer_sets :
+
+     "r = r_\<Gamma>1 \<union> r_\<Gamma>2 \<union> r_\<Gamma>f"
+     "w = w_\<Gamma>1 \<union> w_\<Gamma>2 \<union> w_\<Gamma>f  "
+     "w_\<Gamma>1 \<inter> w_\<Gamma>2 = {} "
+     "w_\<Gamma>1 \<inter> w_\<Gamma>f = {} "
+     "w_\<Gamma>2 \<inter> w_\<Gamma>f = {} "     
+     "\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>1 \<langle>r_\<Gamma>1, w_\<Gamma>1\<rangle>"       
+     "\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>2 \<langle>r_\<Gamma>2, w_\<Gamma>2\<rangle>" 
+     "\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>f \<langle>r_\<Gamma>f, w_\<Gamma>f\<rangle>" 
+    apply -
+    apply(drule(2) matches_ptrs_split3)
+    using u_sem_array_map2 apply simp
+    by blast
+
+  have w0 : "w_\<Gamma>f = {}"
+  proof -
+    from `K  \<turnstile>* \<Gamma>f :\<kappa>c {S, D} `
+         `list_all2 (kinding []) \<tau>s K`
+    have  "[]  \<turnstile>* instantiate_ctx \<tau>s \<Gamma>f :\<kappa>c {S, D} "
+      by (fastforce dest:substitutivity(5))
+
+    then show ?thesis
+    apply -
+    apply(drule discardable_not_writable_ctx[rotated 2])      
+      using pointer_sets by blast+
+  qed
+
+
+
+(* Recurrence hypothesis for a1 *)
+  obtain r_a1 w_a1_p1 where HI_a1 :
+     "\<Xi>, \<sigma>2 \<turnstile> UPtr p1 rep1 :u TArray (instantiate \<tau>s t1) l1 s1 \<langle>r_a1, w_a1_p1\<rangle>"
+     "r_a1 \<subseteq> r_\<Gamma>1"
+     "frame \<sigma>1 w_\<Gamma>1 \<sigma>2 w_a1_p1"  
+    
+    using u_sem_array_map2(2)[of \<tau>s a1' K \<Gamma>1 "TArray t1 l1 s1"
+      r_\<Gamma>1 w_\<Gamma>1 , simplified pointer_sets spec_eq spec_typing u_sem_array_map2(3-), simplified ,
+       simplified spec_typing]
+    by blast
+
+
+
+  have rw : "w \<inter> r = {}"
+    using `\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma> \<langle>r, w\<rangle>`
+    by(rule matches_ptrs_noalias)
+
+
+ 
+  let ?triplet_\<Gamma>2 = "triplet (\<lambda> \<sigma>. matches_ptrs \<Xi> \<sigma> \<gamma> (instantiate_ctx \<tau>s \<Gamma>2)) "
+  let ?triplet_\<Gamma>f = "triplet (\<lambda> \<sigma>. matches_ptrs \<Xi> \<sigma> \<gamma> (instantiate_ctx \<tau>s \<Gamma>f)) "
+  have "?triplet_\<Gamma>2 \<sigma>1 r_\<Gamma>2 w_\<Gamma>2 w_\<Gamma>1"
+       "?triplet_\<Gamma>f \<sigma>1 r_\<Gamma>f w_\<Gamma>f w_\<Gamma>1"
+    apply(atomize(full),simp add:triplet_def)
+    using pointer_sets rw
+    by blast
+  with `frame \<sigma>1 w_\<Gamma>1 \<sigma>2 w_a1_p1`
+  have \<sigma>2_\<Gamma>2f :
+      "?triplet_\<Gamma>2 \<sigma>2 r_\<Gamma>2 w_\<Gamma>2 w_a1_p1"
+      "?triplet_\<Gamma>f \<sigma>2 r_\<Gamma>f w_\<Gamma>f w_a1_p1"        
+    apply -
+    apply ( drule(2) triplet_frame[rotated 1])+
+    done
+
+    
+   from u_sem_array_map2(5)
+(* Recurrence hypothesis for a2 *)
+   obtain r_a2 w_a2_p2 where HI_a2 :
+     "\<Xi>, \<sigma>f \<turnstile> UPtr p2 rep2 :u TArray (instantiate \<tau>s t2) l2 s2 \<langle>r_a2, w_a2_p2\<rangle>"
+     "r_a2 \<subseteq> r_\<Gamma>2"
+     "frame \<sigma>2 w_\<Gamma>2 \<sigma>f w_a2_p2"
+     apply(atomize(full), rule)
+           apply(rule `a2 = specialise \<tau>s a2'`)
+          apply(rule `\<Xi>, K, \<Gamma>2 \<turnstile> a2' : TArray t2 l2 s2`)
+     using u_sem_array_map2 \<sigma>2_\<Gamma>2f[simplified triplet_def]
+     by auto
+
+ 
+
+   from `?triplet_\<Gamma>f \<sigma>2 r_\<Gamma>f w_\<Gamma>f w_a1_p1`
+   have \<sigma>2_\<Gamma>f_w\<Gamma>2 : "?triplet_\<Gamma>f \<sigma>2 r_\<Gamma>f w_\<Gamma>f w_\<Gamma>2"
+     apply (simp add:triplet_def)
+     using pointer_sets rw
+     by blast
+
+   then have \<sigma>f_\<Gamma>f : 
+      "?triplet_\<Gamma>f \<sigma>f r_\<Gamma>f w_\<Gamma>f w_a2_p2"
+     apply ( rule triplet_frame[rotated 1])
+     by (rule HI_a2)
+
+  (* This comes from deconstructing the following typing judgement *)
+  from `\<Xi>, \<sigma>2 \<turnstile> UPtr p1 rep1 :u TArray (instantiate \<tau>s t1) l1 s1 \<langle>r_a1, w_a1_p1\<rangle>`
+       ` sigil_perm s1 \<noteq> Some ReadOnly`
+       `\<sigma>2 p1 = Some (UArray vs1 rep1')`
+   obtain  w_a1 ptrl1 where
+    vs1_lems : "w_a1_p1 = insert p1 w_a1"
+      "\<Xi>, \<sigma>2 \<turnstile>* vs1 :ua instantiate \<tau>s t1 \<langle>r_a1, w_a1\<rangle> "     
+      "rep1 = RArray (type_repr (instantiate \<tau>s t1)) (length vs1)"
+      "p1 \<notin> w_a1"
+      " p1 \<notin> r_a1" 
+      "l1 = length vs1"
+      " s1 = Boxed Writable ptrl1"
+    
+    apply -
+    apply(erule u_t_p_arrE)    
+      apply simp+     
+    done       
+  
+  (* deconstructing the typing judgement  *)
+  from ` \<Xi>, \<sigma>f \<turnstile> UPtr p2 rep2 :u TArray (instantiate \<tau>s t2) l2 s2 \<langle>r_a2, w_a2_p2\<rangle>`
+       ` sigil_perm s2 \<noteq> Some ReadOnly`
+       `\<sigma>f p2 = Some (UArray vs2 rep2')`
+  obtain  w_a2 ptrl2 where
+    vs2_lems : "w_a2_p2 = insert p2 w_a2"
+      "\<Xi>, \<sigma>f \<turnstile>* vs2 :ua instantiate \<tau>s t2 \<langle>r_a2, w_a2\<rangle> "     
+      "rep2 = RArray (type_repr (instantiate \<tau>s t2)) (length vs2)"
+      "p2 \<notin> w_a2"
+      " p2 \<notin> r_a2" 
+      "l2 = length vs2"
+      " s2 = Boxed Writable ptrl2"
+    
+    apply -
+    apply(erule u_t_p_arrE)    
+     apply simp+
+    done       
+
+
+
+
+
+  let ?triplet_vs1 = "triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs1 (instantiate \<tau>s t1))"
+  have "?triplet_vs1 \<sigma>2 r_a1 w_a1 w_\<Gamma>2"
+    apply(simp add:triplet_def
+     `\<Xi>, \<sigma>2 \<turnstile>* vs1 :ua instantiate \<tau>s t1 \<langle>r_a1, w_a1\<rangle>`)
+    using `r_a1 \<subseteq> r_\<Gamma>1` 
+          `w_a1_p1 = insert p1 w_a1`
+          \<sigma>2_\<Gamma>2f(1)[simplified triplet_def] pointer_sets rw 
+ 
+    by blast
+  then have \<sigma>f_vs1 :  "?triplet_vs1 \<sigma>f r_a1 w_a1 w_a2_p2"
+    apply (rule triplet_frame[rotated 1])
+    by(rule `frame \<sigma>2 w_\<Gamma>2 \<sigma>f w_a2_p2`)
+
+ 
+  have h : "\<Xi>, \<sigma>f \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>f \<langle>r_\<Gamma>f, w_\<Gamma>f\<rangle>"
+    using \<sigma>f_\<Gamma>f[simplified triplet_def] by simp
+
+
+(* hyps de recurrence on f *) 
+  from  u_sem_array_map2(8)[of _ _ _ _ _ _ w_\<Gamma>f _ _ _ _ r_\<Gamma>f]
+  obtain r_f1 w_f1 r_f2 w_f2 where
+   HI_f : 
+     "\<Xi>, \<sigma>\<sigma> \<turnstile>* vs1' :ua instantiate \<tau>s t1 \<langle>r_f1, w_f1\<rangle>"
+     "\<Xi>, \<sigma>\<sigma> \<turnstile>* vs2' :ua instantiate \<tau>s t2 \<langle>r_f2, w_f2\<rangle>"
+     "r_f1 \<inter> w_f2 = {}"
+     "r_f2 \<inter> w_f1 = {}"
+     "w_f1 \<inter> w_f2 = {}"
+     "r_f1 \<union> r_f2 \<subseteq> r_a1 \<union> r_a2 \<union> r_\<Gamma>f"
+     "frame \<sigma>f (w_a1 \<union> w_a2) \<sigma>\<sigma> (w_f1 \<union> w_f2)"
+    apply (atomize(full), rule)
+                  apply(rule `f = specialise \<tau>s f'`)
+                 apply(rule `\<Xi>, K, Some t1 # Some t2 # \<Gamma>f \<turnstile> f' : TProduct t1 t2`)
+                apply(rule `w_\<Gamma>f = {}`)
+    using \<sigma>f_vs1[simplified triplet_def] apply blast
+              apply(rule `\<Xi>, \<sigma>f \<turnstile>* vs2 :ua instantiate \<tau>s t2 \<langle>r_a2, w_a2\<rangle>`)
+    using \<sigma>2_\<Gamma>2f(2)[simplified triplet_def] `w_a1_p1 = insert p1 w_a1` apply blast    
+    using \<sigma>f_\<Gamma>f[simplified triplet_def] `w_a2_p2 = insert p2 w_a2` apply blast
+    using \<sigma>f_vs1[simplified triplet_def]  `w_a2_p2 = insert p2 w_a2` apply blast
+    using \<sigma>f_vs1[simplified triplet_def]  `w_a2_p2 = insert p2 w_a2` apply blast
+    using `r_a2 \<subseteq> r_\<Gamma>2` 
+          `w_a1_p1 = insert p1 w_a1`
+          \<sigma>2_\<Gamma>2f(1)[simplified triplet_def]
+         apply blast
+        apply(simp_all add:u_sem_array_map2)    
+     apply(simp add: \<sigma>f_\<Gamma>f[simplified triplet_def] )    
+    by meson
+
+  let ?triplet_p1 = "triplet (\<lambda> \<sigma>. uval_typing \<Xi> \<sigma> (UPtr p1 rep1) (TArray (instantiate \<tau>s t1) l1 s1) ) "
+  have \<sigma>2_p1 : "?triplet_p1 \<sigma>2 r_a1 w_a1_p1 w_\<Gamma>2"
+    apply (simp add:triplet_def
+            ` \<Xi>, \<sigma>2 \<turnstile> UPtr p1
+              rep1 :u TArray (instantiate \<tau>s t1) l1 s1 \<langle>r_a1, w_a1_p1\<rangle>`)
+    using `r_a1 \<subseteq> r_\<Gamma>1` rw pointer_sets \<sigma>2_\<Gamma>2f(1)[simplified triplet_def]
+    by blast
+
+ 
+  then have \<sigma>f_p1 : "?triplet_p1 \<sigma>f r_a1 w_a1_p1 w_a2_p2"
+    apply (rule triplet_frame[rotated 1])
+    by (rule HI_a2)
+  
+  then have neq_p12 : "p1 \<noteq> p2"
+    apply (simp add: triplet_def
+      `w_a1_p1 = insert p1 w_a1`
+      `w_a2_p2 = insert p2 w_a2`
+    )
+    by blast
+
+  
+  have "ortho \<sigma>2 w_\<Gamma>2 {p1}"
+    apply (simp add:ortho_def `\<sigma>2 p1 = Some _` )
+    using \<sigma>2_p1[simplified triplet_def] `w_a1_p1 = insert p1 w_a1`
+    by blast
+  then have  "ortho \<sigma>f w_a2_p2 {p1}"    
+    apply(rule frame_ortho[rotated 1])
+    by(rule `frame \<sigma>2 w_\<Gamma>2 \<sigma>f w_a2_p2`)
+  then have  "ortho \<sigma>f (w_a1 \<union> w_a2) {p1, p2}"
+    using `w_a2_p2 = insert p2 w_a2`
+          `w_a1_p1 = insert p1 w_a1`
+          `\<sigma>f p2 = Some _`
+          `p1 \<notin> w_a1`
+          `p2 \<notin> w_a2`
+          \<sigma>f_p1[simplified triplet_def]
+    by (simp add:ortho_def)
+
+  then have  "ortho \<sigma>\<sigma> (w_f1 \<union> w_f2) {p1, p2}"
+    apply(rule frame_ortho[rotated 1])
+    by (rule `frame \<sigma>f (w_a1 \<union> w_a2) \<sigma>\<sigma> (w_f1 \<union> w_f2)`)
+  then have p12_notin_wf12 : 
+     "p1 \<notin> w_f1 \<union> w_f2 "
+     "p2 \<notin> w_f1 \<union> w_f2 "
+    by (simp add:ortho_def)+
+
+
+  have p12_notin_rf12 : "p1 \<notin> r_f1 \<union>  r_f2"
+       "p2 \<notin> r_f1 \<union>  r_f2" 
+    
+    using \<sigma>2_\<Gamma>2f[simplified triplet_def] 
+          \<sigma>f_\<Gamma>f[simplified triplet_def]
+          \<sigma>f_p1[simplified triplet_def]
+          `w_a1_p1 = insert p1 w_a1`
+          `w_a2_p2 = insert p2 w_a2`
+          `p1 \<notin> r_a1`
+          `p2 \<notin> r_a2`
+          `r_f1 \<union> r_f2 \<subseteq> r_a1 \<union> r_a2 \<union> r_\<Gamma>f`
+          `r_a1 \<subseteq> r_\<Gamma>1`
+          `r_a2 \<subseteq> r_\<Gamma>2`          
+    by auto
+
+  note p12_notinf = p12_notin_wf12 p12_notin_rf12
+  
+ 
+  let ?\<sigma>\<sigma>'' = "\<sigma>\<sigma>(p1 \<mapsto> UArray vs1' rep1', p2 \<mapsto> UArray vs2' rep2')"
+  have \<sigma>\<sigma>_update_frame : 
+    "frame \<sigma>\<sigma> {p2, p1} ?\<sigma>\<sigma>'' {p2, p1}"
+    using frame_app[ OF frame_single_update frame_single_update, simplified]
+    
+    by blast    
+    
+  let ?triplet_vs1' = "triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs1' (instantiate \<tau>s t1))"
+  let ?triplet_vs2' = "triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs2' (instantiate \<tau>s t2))"
+  have \<sigma>\<sigma>_vs12' : "?triplet_vs1'  \<sigma>\<sigma> r_f1 w_f1 {p1, p2}"
+      "?triplet_vs2'  \<sigma>\<sigma> r_f2 w_f2 {p1, p2}"
+    apply(atomize(full))
+    apply (simp add:triplet_def 
+           `\<Xi>, \<sigma>\<sigma> \<turnstile>* vs1' :ua instantiate \<tau>s t1 \<langle>r_f1, w_f1\<rangle>`
+`\<Xi>, \<sigma>\<sigma> \<turnstile>* vs2' :ua instantiate \<tau>s t2 \<langle>r_f2, w_f2\<rangle>`
+           
+     )
+    using  p12_notinf by blast
+  
+   have \<sigma>\<sigma>''_vs12' : 
+     "?triplet_vs1' ?\<sigma>\<sigma>'' r_f1 w_f1 {p1, p2}"
+     "?triplet_vs2' ?\<sigma>\<sigma>'' r_f2 w_f2 {p1, p2}"
+     thm triplet_frame
+      apply (atomize(full))
+     using \<sigma>\<sigma>_vs12'[THEN triplet_frame(2)[OF \<sigma>\<sigma>_update_frame[simplified insert_commute]]]
+     
+     by  simp
+
+   have final_frame : "frame \<sigma>1 w ?\<sigma>\<sigma>''
+     (insert p1 w_f1 \<union> insert p2 w_f2)"
+   proof -
+     note f\<sigma>1 = `frame \<sigma>1 w_\<Gamma>1 \<sigma>2 w_a1_p1`
+     note f\<sigma>2 = `frame \<sigma>2 w_\<Gamma>2 \<sigma>f w_a2_p2`
+     note f\<sigma>f = `frame \<sigma>f (w_a1 \<union> w_a2) \<sigma>\<sigma> (w_f1 \<union> w_f2)`
+     note f\<sigma>\<sigma> = `frame \<sigma>\<sigma> {p2, p1} ?\<sigma>\<sigma>'' {p2, p1}`
+
+     have f\<sigma>1f : "frame \<sigma>1 (w_\<Gamma>1 \<union> w_\<Gamma>2) \<sigma>f (w_a1_p1 \<union> w_a2_p2)"
+       by (rule frame_app[OF f\<sigma>1 f\<sigma>2])
+     have f\<sigma>f' : "frame \<sigma>f (w_a1_p1 \<union> w_a2_p2) ?\<sigma>\<sigma>'' (insert p1 w_f1 \<union> insert p2 w_f2)"
+       using frame_app[OF f\<sigma>f f\<sigma>\<sigma>] 
+             `w_a1_p1 = insert p1 w_a1` 
+             `w_a2_p2 = insert p2 w_a2`       
+       by force
+     show ?thesis       
+       using frame_trans[OF f\<sigma>1f f\<sigma>f'] pointer_sets w0
+       by simp
+   qed
+
+
+    show ?case
+      apply (rule  exI)+
+      apply (intro conjI)
+
+      apply(simp add:spec_typing)
+       apply(rule u_t_product)
+
+      apply(simp add:vs1_lems 
+         u_sem_map2_lengthes[OF u_sem_array_map2(7)])
+
+            apply (rule_tac vs=vs1' and r=r_f1 and w=w_f1 in u_t_p_arr_w  ) 
+      using \<sigma>\<sigma>''_vs12'[simplified triplet_def] apply blast
+             apply (simp add : neq_p12)
+
+      using p12_notinf  apply blast
+      
+          apply(simp add:vs2_lems  u_sem_map2_lengthes[OF u_sem_array_map2(7)])
+           apply (rule_tac vs=vs2' and r=r_f2 and w=w_f2 in u_t_p_arr_w  )
+      using \<sigma>\<sigma>''_vs12'[simplified triplet_def] apply blast
+            apply (simp add : neq_p12)
+           using p12_notinf  apply blast
+           using neq_p12 HI_f p12_notinf  apply blast
+           using neq_p12 HI_f p12_notinf apply blast
+           using neq_p12 HI_f p12_notinf apply blast
+            apply(simp add:neq_p12)           
+           using HI_a1 HI_a2 HI_f pointer_sets apply blast
+           apply (rule final_frame)
+           done
+         
 next
   case (u_sem_array_put \<xi> \<gamma> \<sigma> a \<sigma>' p r vs r' i \<sigma>'' i' e \<sigma>''' e')
   then show ?case sorry
 next
   case (u_sem_array_put_ub \<xi> \<gamma> \<sigma> a \<sigma>' vs r i \<sigma>'' i' e \<sigma>''' e' p r')
+  then show ?case sorry
+next
+  case (u_sem_array_take \<xi> \<gamma> \<sigma>1 a \<sigma>2 p rep vs rep' i \<sigma>3 j e \<sigma>f st f)
+  (* inspired by the proof array_map2 *)
+ from `ArrayTake a i e = specialise \<tau>s f`
+  obtain a' i' e' where f_def :
+     "a = specialise \<tau>s a'"                
+     "i = specialise \<tau>s i'"
+     "e = specialise \<tau>s e'"
+     "f = ArrayTake a' i' e'"
+    
+    by(case_tac f; simp)
+  from `\<Xi>, K, \<Gamma> \<turnstile> f : \<tau>`[simplified f_def]
+  obtain \<Gamma>1 \<Gamma>' \<Gamma>2 \<Gamma>f t l s k where typings:
+  "K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'"
+  "K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>f"
+  "\<Xi>, K, \<Gamma>1 \<turnstile> a' : TArray t l s"
+  "sigil_perm s \<noteq> Some ReadOnly"
+  "K \<turnstile> t :\<kappa> k"
+  "S \<in> k"
+  "\<Xi>, K, \<Gamma>2 \<turnstile> i' : TPrim (Num U32)"
+  "\<Xi>, K, Some t # Some (TArray t l s) # \<Gamma>f \<turnstile> e' : \<tau>"
+    ..
+
+ from `\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma> \<langle>r, w\<rangle>`
+       `K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>'`
+       `K \<turnstile> \<Gamma>' \<leadsto> \<Gamma>2 | \<Gamma>f`
+   obtain r_\<Gamma>1 r_\<Gamma>2 r_\<Gamma>f w_\<Gamma>1 w_\<Gamma>2 w_\<Gamma>f where pointer_sets :
+
+     "r = r_\<Gamma>1 \<union> r_\<Gamma>2 \<union> r_\<Gamma>f"
+     "w = w_\<Gamma>1 \<union> w_\<Gamma>2 \<union> w_\<Gamma>f  "
+     "w_\<Gamma>1 \<inter> w_\<Gamma>2 = {} "
+     "w_\<Gamma>1 \<inter> w_\<Gamma>f = {} "
+     "w_\<Gamma>2 \<inter> w_\<Gamma>f = {} "     
+     "\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>1 \<langle>r_\<Gamma>1, w_\<Gamma>1\<rangle>"       
+     "\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>2 \<langle>r_\<Gamma>2, w_\<Gamma>2\<rangle>" 
+     "\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>f \<langle>r_\<Gamma>f, w_\<Gamma>f\<rangle>" 
+    apply -
+    apply(drule(2) matches_ptrs_split3)
+     using u_sem_array_take apply simp
+     
+    by blast
+  thm u_sem_array_take
+  (* induction hypothesis for a *)
+  from u_sem_array_take(2)
+obtain r_a w_a_p where IH_a :
+  "\<Xi>, \<sigma>2 \<turnstile> UPtr p rep :u TArray (instantiate \<tau>s t) l s \<langle>r_a, w_a_p\<rangle>"
+  "r_a \<subseteq> r_\<Gamma>1"
+  "frame \<sigma>1 w_\<Gamma>1 \<sigma>2 w_a_p"
+  apply rule
+  using f_def typings pointer_sets u_sem_array_take 
+  by auto
+
+
+have rw : "w \<inter> r = {}"
+    using `\<Xi>, \<sigma>1 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma> \<langle>r, w\<rangle>`
+    by(rule matches_ptrs_noalias)
+
+  let ?triplet_\<Gamma>2 = "triplet (\<lambda> \<sigma>. matches_ptrs \<Xi> \<sigma> \<gamma> (instantiate_ctx \<tau>s \<Gamma>2)) "
+  let ?triplet_\<Gamma>f = "triplet (\<lambda> \<sigma>. matches_ptrs \<Xi> \<sigma> \<gamma> (instantiate_ctx \<tau>s \<Gamma>f)) "
+  have "?triplet_\<Gamma>2 \<sigma>1 r_\<Gamma>2 w_\<Gamma>2 w_\<Gamma>1"
+       "?triplet_\<Gamma>f \<sigma>1 r_\<Gamma>f w_\<Gamma>f w_\<Gamma>1"
+    apply(atomize(full),simp add:triplet_def)
+    using pointer_sets rw
+    by blast
+  with `frame \<sigma>1 w_\<Gamma>1 \<sigma>2 w_a_p`
+  have \<sigma>2_\<Gamma>2f :
+      "?triplet_\<Gamma>2 \<sigma>2 r_\<Gamma>2 w_\<Gamma>2 w_a_p"
+      "?triplet_\<Gamma>f \<sigma>2 r_\<Gamma>f w_\<Gamma>f w_a_p"        
+    apply -
+    apply ( drule(2) triplet_frame[rotated 1])+
+    done
+
+(* Induction hypothesis for j *)
+  from u_sem_array_take(5)
+  obtain r_j w_j where HI_j :
+   "\<Xi>, \<sigma>3 \<turnstile> UPrim (LU32 j) :u  (TPrim (Num U32)) \<langle>r_j, w_j\<rangle>"
+   "r_j \<subseteq> r_\<Gamma>2"
+   "frame \<sigma>2 w_\<Gamma>2 \<sigma>3 w_j"  
+    apply rule
+          apply(simp add:f_def)
+    using typings u_sem_array_take \<sigma>2_\<Gamma>2f[simplified triplet_def] 
+         apply auto
+    done
+
+ from `?triplet_\<Gamma>f \<sigma>2 r_\<Gamma>f w_\<Gamma>f w_a_p`
+   have \<sigma>2_\<Gamma>f_w\<Gamma>2 : "?triplet_\<Gamma>f \<sigma>2 r_\<Gamma>f w_\<Gamma>f w_\<Gamma>2"
+     apply (simp add:triplet_def)
+     using pointer_sets rw
+     by blast
+
+   then have \<sigma>f_\<Gamma>f : 
+      "?triplet_\<Gamma>f \<sigma>3 r_\<Gamma>f w_\<Gamma>f w_j"
+     apply ( rule triplet_frame[rotated 1])
+     by (rule HI_j)
+
+   
+  (* This comes from deconstructing the following typing judgement *)
+   from `\<Xi>, \<sigma>2 \<turnstile> UPtr p rep :u TArray (instantiate \<tau>s t) l s \<langle>r_a, w_a_p\<rangle>`
+        ` sigil_perm s \<noteq> Some ReadOnly`
+        `\<sigma>2 p = Some (UArray vs rep')`
+  obtain w_a ptrl where 
+  "w_a_p = insert p w_a"
+  "\<Xi>, \<sigma>2 \<turnstile>* vs :ua instantiate \<tau>s t \<langle>r_a, w_a\<rangle>"
+  "\<sigma>2 p = Some (UArray vs rep')"
+  "rep = RArray (type_repr (instantiate \<tau>s t)) (length vs)"
+  "p \<notin> w_a"
+  "p \<notin> r_a"
+  "l = length vs"
+  "s = Boxed Writable ptrl"    
+    apply -
+    apply(erule u_t_p_arrE)    
+     apply simp+
+    done
+  
+  let ?triplet_vs = "triplet (\<lambda> \<sigma>. uval_typing_array \<Xi> \<sigma> vs (instantiate \<tau>s t))"
+  have "?triplet_vs \<sigma>2 r_a w_a w_\<Gamma>2"
+    apply(simp add:triplet_def
+     `\<Xi>, \<sigma>2 \<turnstile>* vs :ua instantiate \<tau>s t \<langle>r_a, w_a\<rangle>`)
+    using `r_a \<subseteq> r_\<Gamma>1` 
+          `w_a_p = insert p w_a`
+          \<sigma>2_\<Gamma>2f(1)[simplified triplet_def] pointer_sets rw 
+ 
+    by blast
+  then have \<sigma>3_vs :  "?triplet_vs \<sigma>3 r_a w_a w_j"
+    apply (rule triplet_frame[rotated ])    
+    by(rule `frame \<sigma>2 w_\<Gamma>2 \<sigma>3 w_j`)
+
+   have h : "\<Xi>, \<sigma>3 \<turnstile> \<gamma> matches instantiate_ctx \<tau>s \<Gamma>f \<langle>r_\<Gamma>f, w_\<Gamma>f\<rangle>"
+     using \<sigma>f_\<Gamma>f[simplified triplet_def] by simp
+
+   let ?triplet_p = "triplet (\<lambda> \<sigma>. uval_typing \<Xi> \<sigma> (UPtr p rep) (TArray (instantiate \<tau>s t) l s))"
+   have \<sigma>2_p : "?triplet_p \<sigma>2 r_a w_a_p w_\<Gamma>2"
+     apply (simp add:triplet_def IH_a)
+     using `r_a \<subseteq> r_\<Gamma>1`  pointer_sets rw
+          \<sigma>2_\<Gamma>2f[simplified triplet_def]
+     by auto
+
+   then have \<sigma>3_p : "?triplet_p \<sigma>3 r_a w_a_p w_j"
+     apply (rule triplet_frame[rotated ])
+     by(rule `frame \<sigma>2 w_\<Gamma>2 \<sigma>3 w_j`)
+
+
+  (* \<Xi>, \<sigma>2 \<turnstile> UPtr p rep :u TArray (instantiate \<tau>s t) l s \<langle>r_a, w_a_p\<rangle> *)
+   have h_vs : " \<Xi>, \<sigma>3 \<turnstile> vs ! unat j #
+             UPtr p rep #
+             \<gamma> matches instantiate_ctx \<tau>s
+                        (Some t # Some (TArray t l s) # \<Gamma>f)
+                \<langle>r'1 \<union> (r_a \<union> r_\<Gamma>f), w'1 \<union> ((w_a_p) \<union> w_\<Gamma>f)\<rangle>"
+(*
+         (Some (instantiate \<tau>s t) 
+                           # Some (TArray (instantiate \<tau>s t) l s) 
+                           # instantiate_ctx \<tau>s \<Gamma>f)
+*)
+     
+     apply(intro matches_ptrs_cons)
+     using u_sem_array_take apply simp
+     using u_sem_array_take apply simp
+             apply (rule h)
+     using \<sigma>3_p[simplified triplet_def] apply simp
+           prefer 4
+     using \<sigma>3_vs[simplified triplet_def]
+find_theorems uval_typing_record nth
+     find_theorems uval_typing_array nth
+     find_theorems vs
+     find_theorems UPtr uval_typing
+     find_theorems rep
+     find_theorems \<sigma>3 frame
+     find_theorems w_a_p
+     find_theorems p
+
+
+
+(* Induction hypothesis on e *)
+  from u_sem_array_take(8)
+  have "I"
+    apply rule
+    apply (simp add:f_def)
+    using typings apply blast
+    using u_sem_array_take apply blast
+    using u_sem_array_take apply blast
+    apply intro
+    prefer 3
+
   then show ?case sorry
 qed
 inductive_cases u_t_productE': "\<Xi>, \<sigma> \<turnstile> UProduct a b :u t \<langle>r,w\<rangle>"

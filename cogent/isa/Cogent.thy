@@ -49,6 +49,7 @@ datatype prim_op
 
 section {* Types *}
 
+
 datatype ptr_layout = PtrBits int int
                     | PtrVariant int int "(name \<times> int \<times> ptr_layout) list"
                     | PtrRecord "(name \<times> ptr_layout) list"
@@ -282,6 +283,21 @@ lemma variant_un_bound: "length (variant_un f g xs ys) \<le> length xs + length 
 
 subsection {* types *}
 
+
+(* refinement predicate/expressions *)
+datatype rexpr =
+  Var nat
+  | Plus rexpr rexpr
+  | NatLit nat
+  | Eq rexpr rexpr
+  | Lt rexpr rexpr
+  | And rexpr rexpr
+  | BoolLit bool
+
+
+
+
+
 datatype type = TVar index
               | TVarBang index
               | TCon name "type list" sigil
@@ -291,6 +307,7 @@ datatype type = TVar index
               | TProduct type type
               | TRecord "(name \<times> type \<times> record_state) list" sigil
               | TUnit
+              | TRefine type rexpr
 
 datatype lit = LBool bool
              | LU8 "8 word"
@@ -367,6 +384,8 @@ fun type_wellformed :: "nat \<Rightarrow> type \<Rightarrow> bool" where
 | "type_wellformed n (TProduct t1 t2) = (type_wellformed n t1 \<and> type_wellformed n t2)"
 | "type_wellformed n (TRecord ts _) = (distinct (map fst ts) \<and> (list_all (\<lambda>x. type_wellformed n (fst (snd x))) ts))"
 | "type_wellformed n TUnit = True"
+(*TODO: check the refinement expression  *)
+| "type_wellformed n (TRefine t _) = type_wellformed n t"
 
 definition type_wellformed_pretty :: "kind env \<Rightarrow> type \<Rightarrow> bool" ("_ \<turnstile> _ wellformed" [30,20] 60) where
   "K \<turnstile> t wellformed \<equiv> type_wellformed (length K) t"
@@ -414,6 +433,7 @@ fun kinding_fn :: "kind env \<Rightarrow> type \<Rightarrow> kind" where
 | "kinding_fn K (TProduct ta tb) = kinding_fn K ta \<inter> kinding_fn K tb"
 | "kinding_fn K (TRecord ts s)   = Inter (set (map (\<lambda>(_,t,b). case b of Present \<Rightarrow> kinding_fn K t | Taken \<Rightarrow> UNIV) ts)) \<inter> (sigil_kind s)"
 | "kinding_fn K TUnit            = UNIV"
+| "kinding_fn K (TRefine t _) = kinding_fn K t" 
 
 lemmas kinding_fn_induct = kinding_fn.induct[case_names kind_tvar kind_tvarb kind_tcon kind_tfun kind_tprim kind_tsum kind_tprod kind_trec kind_tunit]
 
@@ -454,6 +474,7 @@ fun bang :: "type \<Rightarrow> type" where
 | "bang (TProduct t u) = TProduct (bang t) (bang u)"
 | "bang (TRecord ts s) = TRecord (map (\<lambda>(n, t, b). (n, bang t, b)) ts) (bang_sigil s)"
 | "bang (TUnit)        = TUnit"
+| "bang (TRefine t e) = TRefine (bang t) e"
 
 fun instantiate :: "type substitution \<Rightarrow> type \<Rightarrow> type" where
   "instantiate \<delta> (TVar i)       = (if i < length \<delta> then \<delta> ! i else TVar i)"
@@ -465,6 +486,7 @@ fun instantiate :: "type substitution \<Rightarrow> type \<Rightarrow> type" whe
 | "instantiate \<delta> (TProduct t u) = TProduct (instantiate \<delta> t) (instantiate \<delta> u)"
 | "instantiate \<delta> (TRecord ts s) = TRecord (map (\<lambda> (n, t, b). (n, instantiate \<delta> t, b)) ts) s"
 | "instantiate \<delta> (TUnit)        = TUnit"
+| "instantiate \<delta> (TRefine t e)  = TRefine (instantiate \<delta> t) e"
 
 fun specialise :: "type substitution \<Rightarrow> 'f expr \<Rightarrow> 'f expr" where
   "specialise \<delta> (Var i)           = Var i"
@@ -498,6 +520,7 @@ abbreviation record_kind_subty :: "kind_comp set list \<Rightarrow> name \<times
 abbreviation variant_kind_subty :: "name \<times> Cogent.type \<times> variant_state \<Rightarrow> name \<times> Cogent.type \<times> variant_state \<Rightarrow> bool" where
   "variant_kind_subty p1 p2 \<equiv> snd (snd p1) \<le> snd (snd p2)"
 
+(* TODO: *)
 inductive subtyping :: "kind env \<Rightarrow> type \<Rightarrow> type \<Rightarrow> bool" ("_ \<turnstile> _ \<sqsubseteq> _" [40,0,40] 60) where
   subty_tvar   : "n1 = n2 \<Longrightarrow> K \<turnstile> TVar n1 \<sqsubseteq> TVar n2"
 | subty_tvarb  : "n1 = n2 \<Longrightarrow> K \<turnstile> TVarBang n1 \<sqsubseteq> TVarBang n2"

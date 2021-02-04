@@ -283,20 +283,27 @@ lemma variant_un_bound: "length (variant_un f g xs ys) \<le> length xs + length 
 
 subsection {* types *}
 
-
 (* refinement predicate/expressions *)
 datatype rexpr =
-  Var nat
-  | Plus rexpr rexpr
-  | NatLit nat
-  | Eq rexpr rexpr
-  | Lt rexpr rexpr
-  | And rexpr rexpr
-  | BoolLit bool
+  PVar nat
+  | PPlus rexpr rexpr
+  | PNatLit nat
+  | PEq rexpr rexpr
+  | PLt rexpr rexpr
+  | PAnd rexpr rexpr
+  | PBoolLit bool
 
+fun rexpr_maxvar :: "rexpr \<Rightarrow> nat" where
+  "rexpr_maxvar (PVar n) = n"
+| "rexpr_maxvar (PPlus e0 e1) = max (rexpr_maxvar e0) (rexpr_maxvar e1)"
+| "rexpr_maxvar (PEq e0 e1) = max (rexpr_maxvar e0) (rexpr_maxvar e1)"
+| "rexpr_maxvar (PLt e0 e1) = max (rexpr_maxvar e0) (rexpr_maxvar e1)"
+| "rexpr_maxvar (PAnd p0 p1) = max (rexpr_maxvar p0) (rexpr_maxvar p1)"
+| "rexpr_maxvar (PNatLit _) = 0"
+| "rexpr_maxvar (PBoolLit l) = 0"
 
-
-
+definition rexpr_wf :: "nat \<Rightarrow> rexpr \<Rightarrow> bool" where
+  "rexpr_wf n e \<equiv> rexpr_maxvar e < n"
 
 datatype type = TVar index
               | TVarBang index
@@ -384,8 +391,7 @@ fun type_wellformed :: "nat \<Rightarrow> type \<Rightarrow> bool" where
 | "type_wellformed n (TProduct t1 t2) = (type_wellformed n t1 \<and> type_wellformed n t2)"
 | "type_wellformed n (TRecord ts _) = (distinct (map fst ts) \<and> (list_all (\<lambda>x. type_wellformed n (fst (snd x))) ts))"
 | "type_wellformed n TUnit = True"
-(*TODO: check the refinement expression  *)
-| "type_wellformed n (TRefine t _) = type_wellformed n t"
+| "type_wellformed n (TRefine t rexpr) = (type_wellformed n t \<and> rexpr_wf n rexpr)"
 
 definition type_wellformed_pretty :: "kind env \<Rightarrow> type \<Rightarrow> bool" ("_ \<turnstile> _ wellformed" [30,20] 60) where
   "K \<turnstile> t wellformed \<equiv> type_wellformed (length K) t"
@@ -401,7 +407,8 @@ lemma type_wellformed_intros:
   "\<And>n t1 t2. \<lbrakk> type_wellformed n t1 ; type_wellformed n t2 \<rbrakk> \<Longrightarrow> type_wellformed n (TProduct t1 t2)"
   "\<And>n ts s. \<lbrakk> distinct (map fst ts) ; list_all (\<lambda>x. type_wellformed n (fst (snd x))) ts \<rbrakk> \<Longrightarrow> type_wellformed n (TRecord ts s)"
   "\<And>n. type_wellformed n TUnit"
-  by (simp add: list_all_iff)+
+  "\<And>n t b. \<lbrakk> type_wellformed n t; rexpr_wf n b \<rbrakk> \<Longrightarrow> type_wellformed n (TRefine t b)"
+  by (simp add: list_all_iff rexpr_wf_def)+
 
 lemma type_wellformed_pretty_intros:
   "\<And>K i. i < length K \<Longrightarrow> type_wellformed_pretty K (TVar i)"
@@ -413,7 +420,8 @@ lemma type_wellformed_pretty_intros:
   "\<And>K t1 t2. \<lbrakk> type_wellformed_pretty K t1 ; type_wellformed_pretty K t2 \<rbrakk> \<Longrightarrow> type_wellformed_pretty K (TProduct t1 t2)"
   "\<And>K ts s. \<lbrakk> distinct (map fst ts) ; list_all (\<lambda>x. type_wellformed_pretty K (fst (snd x))) ts \<rbrakk> \<Longrightarrow> type_wellformed_pretty K (TRecord ts s)"
   "\<And>K. type_wellformed_pretty K TUnit"
-  by (simp add: list_all_iff)+
+  "\<And>K t b. \<lbrakk> type_wellformed_pretty K t; rexpr_wf (length K) b \<rbrakk> \<Longrightarrow> type_wellformed_pretty K (TRefine t b)"
+  by (simp add: list_all_iff rexpr_wf_def)+
 
 definition type_wellformed_all_pretty :: "kind env \<Rightarrow> type list \<Rightarrow> bool" ("_ \<turnstile>* _ wellformed" [30,20] 60) where
   "K \<turnstile>* ts wellformed \<equiv> (\<forall>t\<in>set ts. type_wellformed (length K) t)"
@@ -421,7 +429,6 @@ declare type_wellformed_all_pretty_def[simp]
 
 definition proc_ctx_wellformed :: "('f \<Rightarrow> poly_type) \<Rightarrow> bool" where
   "proc_ctx_wellformed \<Xi> = (\<forall> f. let (K, \<tau>i, \<tau>o) = \<Xi> f in K \<turnstile> TFun \<tau>i \<tau>o wellformed)"
-
 
 fun kinding_fn :: "kind env \<Rightarrow> type \<Rightarrow> kind" where
   "kinding_fn K (TVar i)         = (if i < length K then K ! i else undefined)"
@@ -514,13 +521,20 @@ fun specialise :: "type substitution \<Rightarrow> 'f expr \<Rightarrow> 'f expr
 
 section {* Subtyping *}
 
+(* TODO *)
+fun refsatisfy :: "kind env \<Rightarrow> rexpr \<Rightarrow> rexpr \<Rightarrow> bool" where
+  "refsatisfy _ _ _ = False"
+
+(* TODO *)
+fun refextract :: "kind env \<Rightarrow> kind env" where
+  "refextract k = k"
+
 abbreviation record_kind_subty :: "kind_comp set list \<Rightarrow> name \<times> Cogent.type \<times> record_state \<Rightarrow> name \<times> Cogent.type \<times> record_state \<Rightarrow> bool" where
   "record_kind_subty K p1 p2 \<equiv> snd (snd p1) = snd (snd p2) \<or> ((K \<turnstile> (fst (snd p1)) :\<kappa> {D}) \<and> snd (snd p1) < snd (snd p2))"
 
 abbreviation variant_kind_subty :: "name \<times> Cogent.type \<times> variant_state \<Rightarrow> name \<times> Cogent.type \<times> variant_state \<Rightarrow> bool" where
   "variant_kind_subty p1 p2 \<equiv> snd (snd p1) \<le> snd (snd p2)"
 
-(* TODO: *)
 inductive subtyping :: "kind env \<Rightarrow> type \<Rightarrow> type \<Rightarrow> bool" ("_ \<turnstile> _ \<sqsubseteq> _" [40,0,40] 60) where
   subty_tvar   : "n1 = n2 \<Longrightarrow> K \<turnstile> TVar n1 \<sqsubseteq> TVar n2"
 | subty_tvarb  : "n1 = n2 \<Longrightarrow> K \<turnstile> TVarBang n1 \<sqsubseteq> TVarBang n2"
@@ -544,7 +558,15 @@ inductive subtyping :: "kind env \<Rightarrow> type \<Rightarrow> type \<Rightar
                   ; list_all2 variant_kind_subty ts1 ts2
                   \<rbrakk> \<Longrightarrow> K \<turnstile> TSum ts1 \<sqsubseteq> TSum ts2"
 | subty_tunit  : "K \<turnstile> TUnit \<sqsubseteq> TUnit"
-
+(* 
+TODO: add subtyping rules for refinement type 
+PS: the subtyping for refinement type is different from the subtyping above
+More importantly should we actually ad here? or somewhere else
+*)
+| subty_tref_base : "b1 = b2 \<Longrightarrow> K \<turnstile> TRefine b1 p \<sqsubseteq> b2"
+| subty_tref_sub : "\<lbrakk>(b1 = b2) 
+                    ; (refsatisfy (refextract K) p q)
+                    \<rbrakk> \<Longrightarrow> K \<turnstile> TRefine b1 p \<sqsubseteq> TRefine b2 q"
 
 section {* Contexts *}
 
@@ -694,6 +716,8 @@ definition prim_word_comp
     | [LU64 x, LU64 y] \<Rightarrow> LBool (f64 x y)
     | _ \<Rightarrow> LBool False)"
 
+(* TODO: eval for refinement type *)
+
 primrec eval_prim_op :: "prim_op \<Rightarrow> lit list \<Rightarrow> lit"
 where
     "eval_prim_op Not xs = LBool (\<not> prim_lbool (hd xs))"
@@ -726,6 +750,8 @@ lemma eval_prim_op_lit_type:
   by (cases pop, auto split: lit.split)
 
 section {* Typing rules *}
+
+(* TODO: add refinement contraints, e.g. if true branch and false branch *)
 
 inductive typing :: "('f \<Rightarrow> poly_type) \<Rightarrow> kind env \<Rightarrow> ctx \<Rightarrow> 'f expr \<Rightarrow> type \<Rightarrow> bool"
           ("_, _, _ \<turnstile> _ : _" [30,0,0,0,20] 60)
@@ -1306,6 +1332,8 @@ and   "K \<turnstile>* map (fst \<circ> snd) fs wellformed \<Longrightarrow> k \
       split: variant_state.split record_state.split)+
 
 section {* Subtyping lemmas *}
+
+(* TODO: refinement type subtyping lemmas *)
 
 lemma subtyping_simps:
   shows
@@ -2148,7 +2176,7 @@ next
   case (TRecord ts s)
   then show ?case
     by (cases s, rename_tac p l, case_tac p; auto simp add: list_all_iff)
-qed (auto simp add: list_all_iff)
+qed (auto simp add: list_all_iff rexpr_wf_def)
 
 lemma wellformed_bang_type_repr[simp]:
   shows "[] \<turnstile> t wellformed \<Longrightarrow> type_repr (bang t) = type_repr t"

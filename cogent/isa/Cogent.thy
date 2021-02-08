@@ -285,7 +285,7 @@ subsection {* types *}
 
 (* refinement predicate/expressions *)
 datatype rexpr =
-  PVar nat
+  PVar nat (*do we actually need nat since it does not support dependent record?*)
   | PPlus rexpr rexpr
   | PNatLit nat
   | PEq rexpr rexpr
@@ -302,8 +302,47 @@ fun rexpr_maxvar :: "rexpr \<Rightarrow> nat" where
 | "rexpr_maxvar (PNatLit _) = 0"
 | "rexpr_maxvar (PBoolLit l) = 0"
 
+datatype rtype = PBool | PNat 
+
+datatype rval = BoolV bool | NatV nat
+
+type_synonym rcnstenv = "(rtype \<times> rexpr) list"
+
+type_synonym renv = "rval list"
+
+fun bool_of :: "rval \<Rightarrow> bool" where
+  "bool_of (BoolV b) = b"
+
+fun nat_of :: "rval \<Rightarrow> nat" where
+  "nat_of (NatV n) = n"
+
+fun reval :: "rcnstenv \<Rightarrow> renv \<Rightarrow> rexpr \<Rightarrow> rval" where
+  "reval \<Delta> \<gamma> (PVar i) = \<gamma> ! i"
+| "reval \<Delta> \<gamma> (PPlus e0 e1) = NatV (nat_of (reval \<Delta> \<gamma> e0) + nat_of (reval \<Delta> \<gamma> e1))"
+| "reval \<Delta> \<gamma> (PAnd e0 e1)  = BoolV (bool_of (reval \<Delta> \<gamma> e0) \<and> bool_of (reval \<Delta> \<gamma> e1))"
+| "reval \<Delta> \<gamma> (PNatLit n)   = NatV n"
+| "reval \<Delta> \<gamma> (PBoolLit n)  = BoolV n"
+| "reval \<Delta> \<gamma> (PEq e0 e1)   = BoolV (reval \<Delta> \<gamma> e0 = reval \<Delta> \<gamma> e1)"
+| "reval \<Delta> \<gamma> (PLt e0 e1)   = BoolV (nat_of (reval \<Delta> \<gamma> e0) < nat_of (reval \<Delta> \<gamma> e1))"
+
 definition rexpr_wf :: "nat \<Rightarrow> rexpr \<Rightarrow> bool" where
   "rexpr_wf n e \<equiv> rexpr_maxvar e < n"
+
+fun rexpr_subst_val :: "rval \<Rightarrow> nat \<Rightarrow> rexpr \<Rightarrow> rexpr" where
+  "rexpr_subst_val v i (PVar j) = (if i = j then case v of NatV n \<Rightarrow> PNatLit n | BoolV b \<Rightarrow> PBoolLit b else (PVar j))"
+| "rexpr_subst_val e i (PPlus e1 e2) = (PPlus (rexpr_subst_val e i e1) (rexpr_subst_val e i e2))"
+| "rexpr_subst_val e i (PEq e0 e1) = PEq (rexpr_subst_val e i e0) (rexpr_subst_val e i e1)"
+| "rexpr_subst_val e i (PLt e0 e1) = PLt (rexpr_subst_val e i e0) (rexpr_subst_val e i e1)"
+| "rexpr_subst_val e i (PAnd p0 p1) = PAnd (rexpr_subst_val e i p0) (rexpr_subst_val e i p1)"
+| "rexpr_subst_val _ _ (PNatLit l) = PNatLit l"
+| "rexpr_subst_val _ _ (PBoolLit l) = PBoolLit l"
+
+definition rexpr_models :: "rcnstenv \<Rightarrow> renv \<Rightarrow> rexpr \<Rightarrow> bool" where
+  "rexpr_models \<Delta> \<gamma> e \<equiv> (
+    length \<Delta> = length \<gamma> \<longrightarrow>
+    (\<forall>i<length \<Delta>. bool_of 
+      (reval (take i \<Delta>) (take i \<gamma>) (rexpr_subst_val (\<gamma> ! i) i (snd (\<Delta> ! i))))) \<longrightarrow>
+        bool_of (reval \<Delta> \<gamma> e))"
 
 datatype type = TVar index
               | TVarBang index
@@ -535,6 +574,25 @@ abbreviation record_kind_subty :: "kind_comp set list \<Rightarrow> name \<times
 abbreviation variant_kind_subty :: "name \<times> Cogent.type \<times> variant_state \<Rightarrow> name \<times> Cogent.type \<times> variant_state \<Rightarrow> bool" where
   "variant_kind_subty p1 p2 \<equiv> snd (snd p1) \<le> snd (snd p2)"
 
+(*
+ TODO: the definition does not seem correct yet (especially substitution)
+*)
+
+definition entails_bool :: "rexpr \<Rightarrow> rexpr \<Rightarrow> bool" where
+  "entails_bool p1 p2 \<equiv> \<forall> b.
+   bool_of (reval [(PBool, p1)] [BoolV b] p1)
+  \<longrightarrow> bool_of (reval [(PBool, p1)] [BoolV b] (rexpr_subst_val (BoolV b) 0 p2))"
+
+definition entails_nat :: "rexpr \<Rightarrow> rexpr \<Rightarrow> bool" where
+  "entails_nat p1 p2 \<equiv> \<forall> n x. (
+   n = nat_of (reval [(PNat, p1)] [NatV x] p1))
+  \<longrightarrow> n = nat_of (reval [(PNat, p1)] [NatV x] (rexpr_subst_val (NatV x) 0 p2))"
+
+fun entails :: "type \<Rightarrow> rexpr \<Rightarrow> rexpr \<Rightarrow> bool" where
+    "entails (TPrim Bool) p1 p2 = entails_bool p1 p2"
+ |  "entails (TPrim (Num _)) p1 p2 = entails_nat p1 p2"
+ |  "entails _ _ _ = False"
+
 inductive subtyping :: "kind env \<Rightarrow> type \<Rightarrow> type \<Rightarrow> bool" ("_ \<turnstile> _ \<sqsubseteq> _" [40,0,40] 60) where
   subty_tvar   : "n1 = n2 \<Longrightarrow> K \<turnstile> TVar n1 \<sqsubseteq> TVar n2"
 | subty_tvarb  : "n1 = n2 \<Longrightarrow> K \<turnstile> TVarBang n1 \<sqsubseteq> TVarBang n2"
@@ -558,15 +616,19 @@ inductive subtyping :: "kind env \<Rightarrow> type \<Rightarrow> type \<Rightar
                   ; list_all2 variant_kind_subty ts1 ts2
                   \<rbrakk> \<Longrightarrow> K \<turnstile> TSum ts1 \<sqsubseteq> TSum ts2"
 | subty_tunit  : "K \<turnstile> TUnit \<sqsubseteq> TUnit"
+| subty_base_tref : "n1 = n2 \<Longrightarrow> K \<turnstile> n1 \<sqsubseteq> TRefine n1 _"
+| subty_tref_tref : "n1 = n2 \<and> entails n1 p1 p2 \<Longrightarrow> K \<turnstile> TRefine n1 p  \<sqsubseteq> TRefine n2 q"
+
 (* 
 TODO: add subtyping rules for refinement type 
 PS: the subtyping for refinement type is different from the subtyping above
 More importantly should we actually ad here? or somewhere else
-*)
+inductive ref_subtyping....
 | subty_tref_base : "b1 = b2 \<Longrightarrow> K \<turnstile> TRefine b1 p \<sqsubseteq> b2"
 | subty_tref_sub : "\<lbrakk>(b1 = b2) 
                     ; (refsatisfy (refextract K) p q)
                     \<rbrakk> \<Longrightarrow> K \<turnstile> TRefine b1 p \<sqsubseteq> TRefine b2 q"
+*)
 
 section {* Contexts *}
 

@@ -285,13 +285,14 @@ subsection {* types *}
 
 (* refinement predicate/expressions *)
 datatype rexpr =
-  PVar nat (*do we actually need nat since it does not support dependent record?*)
+  PVar nat
   | PPlus rexpr rexpr
   | PNatLit nat
   | PEq rexpr rexpr
   | PLt rexpr rexpr
   | PAnd rexpr rexpr
   | PBoolLit bool
+  | PNot rexpr
 
 fun rexpr_maxvar :: "rexpr \<Rightarrow> nat" where
   "rexpr_maxvar (PVar n) = n"
@@ -301,6 +302,7 @@ fun rexpr_maxvar :: "rexpr \<Rightarrow> nat" where
 | "rexpr_maxvar (PAnd p0 p1) = max (rexpr_maxvar p0) (rexpr_maxvar p1)"
 | "rexpr_maxvar (PNatLit _) = 0"
 | "rexpr_maxvar (PBoolLit l) = 0"
+| "rexpr_maxvar (PNot e) = rexpr_maxvar e"
 
 datatype rtype = PBool | PNat 
 
@@ -324,6 +326,7 @@ fun reval :: "rcnstenv \<Rightarrow> renv \<Rightarrow> rexpr \<Rightarrow> rval
 | "reval \<Delta> \<gamma> (PBoolLit n)  = BoolV n"
 | "reval \<Delta> \<gamma> (PEq e0 e1)   = BoolV (reval \<Delta> \<gamma> e0 = reval \<Delta> \<gamma> e1)"
 | "reval \<Delta> \<gamma> (PLt e0 e1)   = BoolV (nat_of (reval \<Delta> \<gamma> e0) < nat_of (reval \<Delta> \<gamma> e1))"
+| "reval \<Delta> \<gamma> (PNot e)      = BoolV (\<not> bool_of (reval \<Delta> \<gamma> e))"
 
 definition rexpr_wf :: "nat \<Rightarrow> rexpr \<Rightarrow> bool" where
   "rexpr_wf n e \<equiv> rexpr_maxvar e < n"
@@ -336,6 +339,7 @@ fun rexpr_subst_val :: "rval \<Rightarrow> nat \<Rightarrow> rexpr \<Rightarrow>
 | "rexpr_subst_val e i (PAnd p0 p1) = PAnd (rexpr_subst_val e i p0) (rexpr_subst_val e i p1)"
 | "rexpr_subst_val _ _ (PNatLit l) = PNatLit l"
 | "rexpr_subst_val _ _ (PBoolLit l) = PBoolLit l"
+| "rexpr_subst_val e i (PNot e0) = PNot (rexpr_subst_val e i e0)"
 
 definition rexpr_models :: "rcnstenv \<Rightarrow> renv \<Rightarrow> rexpr \<Rightarrow> bool" where
   "rexpr_models \<Delta> \<gamma> e \<equiv> (
@@ -399,6 +403,11 @@ datatype 'f expr = Var index
                  | Split "'f expr" "'f expr"
                  | Promote type "'f expr"
 
+(* TODO: convert expr to predicate constraints *)
+fun expr_to_logic :: "'f expr \<Rightarrow> rexpr"
+  where
+  "expr_to_logic _ =  PBoolLit False"
+  
 section {* Kinds *}
 
 datatype kind_comp
@@ -740,6 +749,19 @@ primrec lit_type :: "lit \<Rightarrow> prim_type" where
 | "lit_type (LU32 _)  = Num U32"
 | "lit_type (LU64 _)  = Num U64"
 
+(*
+ since it's inconvenient to operate word,
+ i convert them to nat.
+ TODO: add a range limitation for the nat
+ e.g. the LU8 should be less than 256 (2 ^ 8)
+*) 
+fun lit_to_predicate :: "lit \<Rightarrow> rexpr" where
+  "lit_to_predicate (LBool b) = PBoolLit b"
+| "lit_to_predicate (LU8 n)   = PNatLit (unat n)"
+| "lit_to_predicate (LU16 n)  = PNatLit (unat n)"
+| "lit_to_predicate (LU32 n)  = PNatLit (unat n)"
+| "lit_to_predicate (LU64 n)  = PNatLit (unat n)"
+
 fun upcast_valid :: "num_type \<Rightarrow> num_type \<Rightarrow> bool" where
   "upcast_valid U8  U8  = True"
 | "upcast_valid U8  U16 = True"
@@ -840,6 +862,7 @@ typing_var    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto>w singleton (length
                    ; list_all2 (kinding K) ts K'
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Fun f ts : TFun t' u'"
 
+(* ref-type: substitute the argument *)
 | typing_app    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>2
                    ; \<Xi>, K, \<Gamma>1 \<turnstile> a : TFun x y
                    ; \<Xi>, K, \<Gamma>2 \<turnstile> b : x
@@ -887,19 +910,23 @@ typing_var    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto>w singleton (length
 | typing_esac   : "\<lbrakk> \<Xi>, K, \<Gamma> \<turnstile> x : TSum ts
                    ; [(n, t, Unchecked)] = filter ((=) Unchecked \<circ> snd \<circ> snd) ts
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Esac x n : t"
-
+(* probably wrong, we want so say the var in x is restrcitred rather than crate a newref var*)
 | typing_if     : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto> \<Gamma>1 | \<Gamma>2
                    ; \<Xi>, K, \<Gamma>1 \<turnstile> x : TPrim Bool
-                   ; \<Xi>, K, \<Gamma>2 \<turnstile> a : t
-                   ; \<Xi>, K, \<Gamma>2 \<turnstile> b : t
+                   ; \<Xi>, K, ((Some (TRefine (TPrim bool) (expr_to_logic x))) # \<Gamma>2) \<turnstile> a : t
+                   ; \<Xi>, K, ((Some (TRefine (TPrim bool) (PNot (expr_to_logic x)))) # \<Gamma>2) \<turnstile> b : t
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> If x a b : t"
 
+(* 
+unfortunately this won't work for ref type,
+we have to specify constraints for refinement type
+*)
 | typing_prim   : "\<lbrakk> \<Xi>, K, \<Gamma> \<turnstile>* args : map TPrim ts
                    ; prim_op_type oper = (ts,t)
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Prim oper args : TPrim t"
 
 | typing_lit    : "\<lbrakk> K \<turnstile> \<Gamma> consumed
-                   \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Lit l : TPrim (lit_type l)"
+                   \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Lit l : (TRefine (TPrim (lit_type l)) (lit_to_predicate l))"
 
 | typing_slit   : "\<lbrakk> K \<turnstile> \<Gamma> consumed
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> SLit s : TPrim String"
@@ -948,6 +975,10 @@ typing_var    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto>w singleton (length
                       ; \<Xi>, K, \<Gamma>1 \<turnstile>  e  : t
                       ; \<Xi>, K, \<Gamma>2 \<turnstile>* es : ts
                       \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile>* (e # es) : (t # ts)"
+(*
+extrar typings
+
+*)
 
 
 inductive_cases typing_num     [elim]: "\<Xi>, K, \<Gamma> \<turnstile> e : TPrim (Num \<tau>)"

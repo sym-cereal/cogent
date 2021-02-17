@@ -359,6 +359,10 @@ datatype type = TVar index
               | TUnit
               | TRefine type rexpr
 
+primrec to_ref_type :: "type \<Rightarrow> type" where
+   "to_ref_type (TPrim t) = TRefine (TPrim t) (PBoolLit True)"
+|  "to_ref_type (TRefine t p) = TRefine t p"
+
 datatype lit = LBool bool
              | LU8 "8 word"
              | LU16 "16 word"
@@ -720,27 +724,32 @@ declare is_consumed_def [simp]
 
 section {* Built-in types *}
 
-primrec prim_op_type :: "prim_op \<Rightarrow> prim_type list \<times> prim_type" where
-  "prim_op_type (Plus t)   = ([Num t, Num t], Num t)"
-| "prim_op_type (Times t)  = ([Num t, Num t], Num t)"
-| "prim_op_type (Minus t)  = ([Num t, Num t], Num t)"
-| "prim_op_type (Divide t) = ([Num t, Num t], Num t)"
-| "prim_op_type (Mod t)    = ([Num t, Num t], Num t)"
-| "prim_op_type (BitAnd t) = ([Num t, Num t], Num t)"
-| "prim_op_type (BitOr t)  = ([Num t, Num t], Num t)"
-| "prim_op_type (BitXor t) = ([Num t, Num t], Num t)"
-| "prim_op_type (LShift t) = ([Num t, Num t], Num t)"
-| "prim_op_type (RShift t) = ([Num t, Num t], Num t)"
-| "prim_op_type (Complement t) = ([Num t], Num t)"
-| "prim_op_type (Gt t)     = ([Num t, Num t], Bool )"
-| "prim_op_type (Lt t)     = ([Num t, Num t], Bool )"
-| "prim_op_type (Le t)     = ([Num t, Num t], Bool )"
-| "prim_op_type (Ge t)     = ([Num t, Num t], Bool )"
-| "prim_op_type (Eq t)     = ([t    , t    ], Bool )"
-| "prim_op_type (NEq t)    = ([t    , t    ], Bool )"
-| "prim_op_type (And)      = ([Bool , Bool ], Bool )"
-| "prim_op_type (Or)       = ([Bool , Bool ], Bool )"
-| "prim_op_type (Not)      = ([Bool],         Bool )"
+fun prim_to_ref :: "prim_type \<Rightarrow> type" where
+"prim_to_ref t = TRefine (TPrim t) (PBoolLit True)"
+
+(* change input to refinment *)
+primrec prim_op_type :: "prim_op \<Rightarrow> type list \<times> prim_type" where
+  "prim_op_type (Plus t)   = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (Times t)  = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (Minus t)  = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (Divide t) = ([prim_to_ref (Num t),
+     TRefine (prim_to_ref (Num t)) (PNot (PEq (PVar 0) (PNatLit 0)))], Num t)"
+| "prim_op_type (Mod t)    = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (BitAnd t) = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (BitOr t)  = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (BitXor t) = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (LShift t) = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (RShift t) = ([prim_to_ref (Num t), prim_to_ref (Num t)], Num t)"
+| "prim_op_type (Complement t) = ([prim_to_ref (Num t)], Num t)"
+| "prim_op_type (Gt t)     = ([prim_to_ref (Num t), prim_to_ref (Num t)], Bool )"
+| "prim_op_type (Lt t)     = ([prim_to_ref (Num t), prim_to_ref (Num t)], Bool )"
+| "prim_op_type (Le t)     = ([prim_to_ref (Num t), prim_to_ref (Num t)], Bool )"
+| "prim_op_type (Ge t)     = ([prim_to_ref (Num t), prim_to_ref (Num t)], Bool )"
+| "prim_op_type (Eq t)     = ([prim_to_ref t    , prim_to_ref t    ], Bool )"
+| "prim_op_type (NEq t)    = ([prim_to_ref t    , prim_to_ref t    ], Bool )"
+| "prim_op_type (And)      = ([prim_to_ref Bool , prim_to_ref Bool ], Bool )"
+| "prim_op_type (Or)       = ([prim_to_ref Bool , prim_to_ref Bool ], Bool )"
+| "prim_op_type (Not)      = ([prim_to_ref Bool],         Bool )"
 
 primrec lit_type :: "lit \<Rightarrow> prim_type" where
   "lit_type (LBool _) = Bool"
@@ -918,18 +927,19 @@ typing_var    : "\<lbrakk> K \<turnstile> \<Gamma> \<leadsto>w singleton (length
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> If x a b : t"
 
 (* 
-unfortunately this won't work for ref type,
-we have to specify constraints for refinement type
+TODO: add a list_is_subtypable definition
 *)
-| typing_prim   : "\<lbrakk> \<Xi>, K, \<Gamma> \<turnstile>* args : map TPrim ts
-                   ; prim_op_type oper = (ts,t)
+| typing_prim   : "\<lbrakk> \<Xi>, K, \<Gamma> \<turnstile>* args : expr_ts
+                   ; op_ts = map to_ref_type expr_ts
+                   ; prim_op_type oper = (expect_ts,t)
+                   ; list_is_subtypable op_ts expect_ts
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Prim oper args : TPrim t"
 
 | typing_lit    : "\<lbrakk> K \<turnstile> \<Gamma> consumed
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Lit l : (TRefine (TPrim (lit_type l)) (lit_to_predicate l))"
 
 | typing_slit   : "\<lbrakk> K \<turnstile> \<Gamma> consumed
-                   \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> SLit s : TPrim String"
+                   \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> SLit s : (TRefine (TPrim String) (PBoolLit True))"
 
 | typing_unit   : "\<lbrakk> K \<turnstile> \<Gamma> consumed
                    \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile> Unit : TUnit"
@@ -975,10 +985,7 @@ we have to specify constraints for refinement type
                       ; \<Xi>, K, \<Gamma>1 \<turnstile>  e  : t
                       ; \<Xi>, K, \<Gamma>2 \<turnstile>* es : ts
                       \<rbrakk> \<Longrightarrow> \<Xi>, K, \<Gamma> \<turnstile>* (e # es) : (t # ts)"
-(*
-extrar typings
-
-*)
+(*extrar typings*)
 
 
 inductive_cases typing_num     [elim]: "\<Xi>, K, \<Gamma> \<turnstile> e : TPrim (Num \<tau>)"
